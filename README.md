@@ -88,7 +88,7 @@ cargo build --release
 - [x] **TASK-010** — Parser: statements
 - [x] **TASK-011** — Parser: expressions
 - [x] **TASK-012** — Parser: function declarations
-- [ ] **TASK-013** — Parser error recovery
+- [x] **TASK-013** — Parser error recovery
 - [x] **TASK-014** — Parser tests
 
 ### Milestone 4: Name Resolution + Type Checker

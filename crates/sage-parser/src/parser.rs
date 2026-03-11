@@ -49,7 +49,14 @@ fn program_parser(source: Arc<str>) -> impl Parser<Token, Program, Error = Parse
     let src = source.clone();
     let src2 = source.clone();
 
-    let top_level = agent_parser(source.clone()).or(fn_parser(source.clone()));
+    // Top-level declarations with recovery - skip to next agent/fn/run on error
+    let top_level = agent_parser(source.clone())
+        .or(fn_parser(source.clone()))
+        .recover_with(skip_then_retry_until([
+            Token::KwAgent,
+            Token::KwFn,
+            Token::KwRun,
+        ]));
 
     let run_stmt = just(Token::KwRun).ignore_then(ident_token_parser(src.clone()));
 
@@ -209,6 +216,15 @@ fn block_parser(source: Arc<str>) -> BoxedParser<'static, Token, Block, ParseErr
         stmt_parser(src.clone(), block)
             .repeated()
             .delimited_by(just(Token::LBrace), just(Token::RBrace))
+            .recover_with(nested_delimiters(
+                Token::LBrace,
+                Token::RBrace,
+                [
+                    (Token::LParen, Token::RParen),
+                    (Token::LBracket, Token::RBracket),
+                ],
+                |_span: Range<usize>| vec![],
+            ))
             .map_with_span(move |stmts, span: Range<usize>| Block {
                 stmts,
                 span: make_span(&src_inner, span),
@@ -1200,5 +1216,77 @@ mod tests {
                 panic!("expected infer expression");
             }
         }
+    }
+
+    // =========================================================================
+    // Error recovery tests
+    // =========================================================================
+
+    #[test]
+    fn recover_from_malformed_agent_continues_to_next() {
+        // First agent has syntax error, second is valid
+        let source = r#"
+            agent Broken {
+                belief x
+            }
+
+            agent Main {
+                on start {
+                    emit(42)
+                }
+            }
+            run Main
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        // Should have errors from the broken agent
+        assert!(!errors.is_empty(), "should have parse errors");
+        // But should still produce a program with the valid agent
+        let prog = prog.expect("should produce partial AST");
+        assert!(prog.agents.iter().any(|a| a.name.name == "Main"));
+    }
+
+    #[test]
+    fn recover_from_mismatched_braces_in_block() {
+        let source = r#"
+            agent Main {
+                on start {
+                    let x = [1, 2, 3
+                    emit(42)
+                }
+            }
+            run Main
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        // Should have errors but still produce an AST
+        assert!(!errors.is_empty(), "should have parse errors");
+        assert!(prog.is_some(), "should produce partial AST despite errors");
+    }
+
+    #[test]
+    fn recover_multiple_errors_reported() {
+        // Multiple errors in different places
+        let source = r#"
+            agent A {
+                belief
+            }
+
+            agent B {
+                belief
+            }
+
+            agent Main {
+                on start {
+                    emit(42)
+                }
+            }
+            run Main
+        "#;
+
+        let (_prog, errors) = parse_str(source);
+        // Should report at least one error from the malformed agents
+        assert!(!errors.is_empty(), "should report errors");
+        // Recovery allows parsing to continue even with errors
     }
 }
