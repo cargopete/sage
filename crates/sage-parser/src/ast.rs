@@ -1,0 +1,698 @@
+//! Abstract Syntax Tree definitions for the Sage language.
+//!
+//! This module defines all AST node types that the parser produces.
+//! Every node carries a `Span` for error reporting.
+
+use sage_types::{Ident, Span, TypeExpr};
+use std::fmt;
+
+// =============================================================================
+// Program (top-level)
+// =============================================================================
+
+/// A complete Sage program.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Program {
+    /// Agent declarations.
+    pub agents: Vec<AgentDecl>,
+    /// Function declarations.
+    pub functions: Vec<FnDecl>,
+    /// The entry-point agent (from `run AgentName`).
+    pub run_agent: Ident,
+    /// Span covering the entire program.
+    pub span: Span,
+}
+
+// =============================================================================
+// Agent declarations
+// =============================================================================
+
+/// An agent declaration: `agent Name { ... }`
+#[derive(Debug, Clone, PartialEq)]
+pub struct AgentDecl {
+    /// The agent's name.
+    pub name: Ident,
+    /// Belief declarations (agent state).
+    pub beliefs: Vec<BeliefDecl>,
+    /// Event handlers.
+    pub handlers: Vec<HandlerDecl>,
+    /// Span covering the entire declaration.
+    pub span: Span,
+}
+
+/// A belief declaration: `belief name: Type`
+#[derive(Debug, Clone, PartialEq)]
+pub struct BeliefDecl {
+    /// The belief's name.
+    pub name: Ident,
+    /// The belief's type.
+    pub ty: TypeExpr,
+    /// Span covering the declaration.
+    pub span: Span,
+}
+
+/// An event handler: `on start { ... }`, `on message(x: T) { ... }`, `on stop { ... }`
+#[derive(Debug, Clone, PartialEq)]
+pub struct HandlerDecl {
+    /// The event kind this handler responds to.
+    pub event: EventKind,
+    /// The handler body.
+    pub body: Block,
+    /// Span covering the entire handler.
+    pub span: Span,
+}
+
+/// The kind of event a handler responds to.
+#[derive(Debug, Clone, PartialEq)]
+pub enum EventKind {
+    /// `on start` — runs when the agent is spawned.
+    Start,
+    /// `on message(param: Type)` — runs when a message is received.
+    Message {
+        /// The parameter name for the incoming message.
+        param_name: Ident,
+        /// The type of the message.
+        param_ty: TypeExpr,
+    },
+    /// `on stop` — runs during graceful shutdown.
+    Stop,
+}
+
+impl fmt::Display for EventKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            EventKind::Start => write!(f, "start"),
+            EventKind::Message {
+                param_name,
+                param_ty,
+            } => {
+                write!(f, "message({param_name}: {param_ty})")
+            }
+            EventKind::Stop => write!(f, "stop"),
+        }
+    }
+}
+
+// =============================================================================
+// Function declarations
+// =============================================================================
+
+/// A function declaration: `fn name(params) -> ReturnType { ... }`
+#[derive(Debug, Clone, PartialEq)]
+pub struct FnDecl {
+    /// The function's name.
+    pub name: Ident,
+    /// The function's parameters.
+    pub params: Vec<Param>,
+    /// The return type.
+    pub return_ty: TypeExpr,
+    /// The function body.
+    pub body: Block,
+    /// Span covering the entire declaration.
+    pub span: Span,
+}
+
+/// A function parameter: `name: Type`
+#[derive(Debug, Clone, PartialEq)]
+pub struct Param {
+    /// The parameter name.
+    pub name: Ident,
+    /// The parameter type.
+    pub ty: TypeExpr,
+    /// Span covering the parameter.
+    pub span: Span,
+}
+
+// =============================================================================
+// Blocks and statements
+// =============================================================================
+
+/// A block of statements: `{ stmt* }`
+#[derive(Debug, Clone, PartialEq)]
+pub struct Block {
+    /// The statements in this block.
+    pub stmts: Vec<Stmt>,
+    /// Span covering the entire block (including braces).
+    pub span: Span,
+}
+
+/// A statement.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Stmt {
+    /// Variable binding: `let name: Type = expr` or `let name = expr`
+    Let {
+        /// The variable name.
+        name: Ident,
+        /// Optional type annotation.
+        ty: Option<TypeExpr>,
+        /// The initial value.
+        value: Expr,
+        /// Span covering the statement.
+        span: Span,
+    },
+
+    /// Assignment: `name = expr`
+    Assign {
+        /// The variable being assigned to.
+        name: Ident,
+        /// The new value.
+        value: Expr,
+        /// Span covering the statement.
+        span: Span,
+    },
+
+    /// Return statement: `return expr?`
+    Return {
+        /// The optional return value.
+        value: Option<Expr>,
+        /// Span covering the statement.
+        span: Span,
+    },
+
+    /// If statement: `if cond { ... } else { ... }`
+    If {
+        /// The condition (must be Bool).
+        condition: Expr,
+        /// The then branch.
+        then_block: Block,
+        /// The optional else branch (can be another If for else-if chains).
+        else_block: Option<ElseBranch>,
+        /// Span covering the statement.
+        span: Span,
+    },
+
+    /// For loop: `for x in iter { ... }`
+    For {
+        /// The loop variable.
+        var: Ident,
+        /// The iterable expression (must be List<T>).
+        iter: Expr,
+        /// The loop body.
+        body: Block,
+        /// Span covering the statement.
+        span: Span,
+    },
+
+    /// Expression statement: `expr`
+    Expr {
+        /// The expression.
+        expr: Expr,
+        /// Span covering the statement.
+        span: Span,
+    },
+}
+
+impl Stmt {
+    /// Get the span of this statement.
+    #[must_use]
+    pub fn span(&self) -> &Span {
+        match self {
+            Stmt::Let { span, .. }
+            | Stmt::Assign { span, .. }
+            | Stmt::Return { span, .. }
+            | Stmt::If { span, .. }
+            | Stmt::For { span, .. }
+            | Stmt::Expr { span, .. } => span,
+        }
+    }
+}
+
+/// The else branch of an if statement.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ElseBranch {
+    /// `else { ... }`
+    Block(Block),
+    /// `else if ...` (chained if)
+    ElseIf(Box<Stmt>),
+}
+
+// =============================================================================
+// Expressions
+// =============================================================================
+
+/// An expression.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Expr {
+    /// LLM inference: `infer("template")` or `infer("template" -> Type)`
+    Infer {
+        /// The prompt template (may contain `{ident}` interpolations).
+        template: StringTemplate,
+        /// Optional result type annotation.
+        result_ty: Option<TypeExpr>,
+        /// Span covering the expression.
+        span: Span,
+    },
+
+    /// Agent spawning: `spawn AgentName { field: value, ... }`
+    Spawn {
+        /// The agent type to spawn.
+        agent: Ident,
+        /// Initial belief values.
+        fields: Vec<FieldInit>,
+        /// Span covering the expression.
+        span: Span,
+    },
+
+    /// Await: `await expr`
+    Await {
+        /// The agent handle to await.
+        handle: Box<Expr>,
+        /// Span covering the expression.
+        span: Span,
+    },
+
+    /// Send message: `send(handle, message)`
+    Send {
+        /// The agent handle to send to.
+        handle: Box<Expr>,
+        /// The message to send.
+        message: Box<Expr>,
+        /// Span covering the expression.
+        span: Span,
+    },
+
+    /// Emit value: `emit(value)`
+    Emit {
+        /// The value to emit to the awaiter.
+        value: Box<Expr>,
+        /// Span covering the expression.
+        span: Span,
+    },
+
+    /// Function call: `name(args)`
+    Call {
+        /// The function name.
+        name: Ident,
+        /// The arguments.
+        args: Vec<Expr>,
+        /// Span covering the expression.
+        span: Span,
+    },
+
+    /// Method call on self: `self.method(args)`
+    SelfMethodCall {
+        /// The method name.
+        method: Ident,
+        /// The arguments.
+        args: Vec<Expr>,
+        /// Span covering the expression.
+        span: Span,
+    },
+
+    /// Self field access: `self.field`
+    SelfField {
+        /// The field (belief) name.
+        field: Ident,
+        /// Span covering the expression.
+        span: Span,
+    },
+
+    /// Binary operation: `left op right`
+    Binary {
+        /// The operator.
+        op: BinOp,
+        /// The left operand.
+        left: Box<Expr>,
+        /// The right operand.
+        right: Box<Expr>,
+        /// Span covering the expression.
+        span: Span,
+    },
+
+    /// Unary operation: `op operand`
+    Unary {
+        /// The operator.
+        op: UnaryOp,
+        /// The operand.
+        operand: Box<Expr>,
+        /// Span covering the expression.
+        span: Span,
+    },
+
+    /// List literal: `[a, b, c]`
+    List {
+        /// The list elements.
+        elements: Vec<Expr>,
+        /// Span covering the expression.
+        span: Span,
+    },
+
+    /// Literal value.
+    Literal {
+        /// The literal value.
+        value: Literal,
+        /// Span covering the expression.
+        span: Span,
+    },
+
+    /// Variable reference.
+    Var {
+        /// The variable name.
+        name: Ident,
+        /// Span covering the expression.
+        span: Span,
+    },
+
+    /// Parenthesized expression: `(expr)`
+    Paren {
+        /// The inner expression.
+        inner: Box<Expr>,
+        /// Span covering the expression (including parens).
+        span: Span,
+    },
+}
+
+impl Expr {
+    /// Get the span of this expression.
+    #[must_use]
+    pub fn span(&self) -> &Span {
+        match self {
+            Expr::Infer { span, .. }
+            | Expr::Spawn { span, .. }
+            | Expr::Await { span, .. }
+            | Expr::Send { span, .. }
+            | Expr::Emit { span, .. }
+            | Expr::Call { span, .. }
+            | Expr::SelfMethodCall { span, .. }
+            | Expr::SelfField { span, .. }
+            | Expr::Binary { span, .. }
+            | Expr::Unary { span, .. }
+            | Expr::List { span, .. }
+            | Expr::Literal { span, .. }
+            | Expr::Var { span, .. }
+            | Expr::Paren { span, .. } => span,
+        }
+    }
+}
+
+/// A field initialization in a spawn expression: `field: value`
+#[derive(Debug, Clone, PartialEq)]
+pub struct FieldInit {
+    /// The field (belief) name.
+    pub name: Ident,
+    /// The initial value.
+    pub value: Expr,
+    /// Span covering the field initialization.
+    pub span: Span,
+}
+
+// =============================================================================
+// Operators
+// =============================================================================
+
+/// Binary operators.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BinOp {
+    // Arithmetic
+    /// `+`
+    Add,
+    /// `-`
+    Sub,
+    /// `*`
+    Mul,
+    /// `/`
+    Div,
+
+    // Comparison
+    /// `==`
+    Eq,
+    /// `!=`
+    Ne,
+    /// `<`
+    Lt,
+    /// `>`
+    Gt,
+    /// `<=`
+    Le,
+    /// `>=`
+    Ge,
+
+    // Logical
+    /// `&&`
+    And,
+    /// `||`
+    Or,
+
+    // String
+    /// `++` (string concatenation)
+    Concat,
+}
+
+impl BinOp {
+    /// Get the precedence of this operator (higher = binds tighter).
+    #[must_use]
+    pub fn precedence(self) -> u8 {
+        match self {
+            BinOp::Or => 1,
+            BinOp::And => 2,
+            BinOp::Eq | BinOp::Ne => 3,
+            BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge => 4,
+            BinOp::Concat => 5,
+            BinOp::Add | BinOp::Sub => 6,
+            BinOp::Mul | BinOp::Div => 7,
+        }
+    }
+
+    /// Check if this operator is left-associative.
+    #[must_use]
+    pub fn is_left_assoc(self) -> bool {
+        // All our operators are left-associative
+        true
+    }
+}
+
+impl fmt::Display for BinOp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            BinOp::Add => write!(f, "+"),
+            BinOp::Sub => write!(f, "-"),
+            BinOp::Mul => write!(f, "*"),
+            BinOp::Div => write!(f, "/"),
+            BinOp::Eq => write!(f, "=="),
+            BinOp::Ne => write!(f, "!="),
+            BinOp::Lt => write!(f, "<"),
+            BinOp::Gt => write!(f, ">"),
+            BinOp::Le => write!(f, "<="),
+            BinOp::Ge => write!(f, ">="),
+            BinOp::And => write!(f, "&&"),
+            BinOp::Or => write!(f, "||"),
+            BinOp::Concat => write!(f, "++"),
+        }
+    }
+}
+
+/// Unary operators.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum UnaryOp {
+    /// `-` (negation)
+    Neg,
+    /// `!` (logical not)
+    Not,
+}
+
+impl fmt::Display for UnaryOp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            UnaryOp::Neg => write!(f, "-"),
+            UnaryOp::Not => write!(f, "!"),
+        }
+    }
+}
+
+// =============================================================================
+// Literals
+// =============================================================================
+
+/// A literal value.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Literal {
+    /// Integer literal: `42`, `-7`
+    Int(i64),
+    /// Float literal: `3.14`, `-0.5`
+    Float(f64),
+    /// Boolean literal: `true`, `false`
+    Bool(bool),
+    /// String literal: `"hello"`
+    String(String),
+}
+
+impl fmt::Display for Literal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Literal::Int(n) => write!(f, "{n}"),
+            Literal::Float(n) => write!(f, "{n}"),
+            Literal::Bool(b) => write!(f, "{b}"),
+            Literal::String(s) => write!(f, "\"{s}\""),
+        }
+    }
+}
+
+// =============================================================================
+// String templates (for interpolation)
+// =============================================================================
+
+/// A string template that may contain interpolations.
+///
+/// For example, `"Hello, {name}!"` becomes:
+/// ```text
+/// StringTemplate {
+///     parts: [
+///         StringPart::Literal("Hello, "),
+///         StringPart::Interpolation(Ident("name")),
+///         StringPart::Literal("!"),
+///     ]
+/// }
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct StringTemplate {
+    /// The parts of the template.
+    pub parts: Vec<StringPart>,
+    /// Span covering the entire template string.
+    pub span: Span,
+}
+
+impl StringTemplate {
+    /// Create a simple template with no interpolations.
+    #[must_use]
+    pub fn literal(s: String, span: Span) -> Self {
+        Self {
+            parts: vec![StringPart::Literal(s)],
+            span,
+        }
+    }
+
+    /// Check if this template has any interpolations.
+    #[must_use]
+    pub fn has_interpolations(&self) -> bool {
+        self.parts
+            .iter()
+            .any(|p| matches!(p, StringPart::Interpolation(_)))
+    }
+
+    /// Get all interpolated identifiers.
+    pub fn interpolations(&self) -> impl Iterator<Item = &Ident> {
+        self.parts.iter().filter_map(|p| match p {
+            StringPart::Interpolation(ident) => Some(ident),
+            StringPart::Literal(_) => None,
+        })
+    }
+}
+
+impl fmt::Display for StringTemplate {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "\"")?;
+        for part in &self.parts {
+            match part {
+                StringPart::Literal(s) => write!(f, "{s}")?,
+                StringPart::Interpolation(ident) => write!(f, "{{{ident}}}")?,
+            }
+        }
+        write!(f, "\"")
+    }
+}
+
+/// A part of a string template.
+#[derive(Debug, Clone, PartialEq)]
+pub enum StringPart {
+    /// A literal string segment.
+    Literal(String),
+    /// An interpolated identifier: `{ident}`
+    Interpolation(Ident),
+}
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn binop_precedence() {
+        // Mul/Div > Add/Sub > Comparison > And > Or
+        assert!(BinOp::Mul.precedence() > BinOp::Add.precedence());
+        assert!(BinOp::Add.precedence() > BinOp::Lt.precedence());
+        assert!(BinOp::Lt.precedence() > BinOp::And.precedence());
+        assert!(BinOp::And.precedence() > BinOp::Or.precedence());
+    }
+
+    #[test]
+    fn binop_display() {
+        assert_eq!(format!("{}", BinOp::Add), "+");
+        assert_eq!(format!("{}", BinOp::Eq), "==");
+        assert_eq!(format!("{}", BinOp::Concat), "++");
+        assert_eq!(format!("{}", BinOp::And), "&&");
+    }
+
+    #[test]
+    fn unaryop_display() {
+        assert_eq!(format!("{}", UnaryOp::Neg), "-");
+        assert_eq!(format!("{}", UnaryOp::Not), "!");
+    }
+
+    #[test]
+    fn literal_display() {
+        assert_eq!(format!("{}", Literal::Int(42)), "42");
+        assert_eq!(format!("{}", Literal::Float(3.14)), "3.14");
+        assert_eq!(format!("{}", Literal::Bool(true)), "true");
+        assert_eq!(format!("{}", Literal::String("hello".into())), "\"hello\"");
+    }
+
+    #[test]
+    fn event_kind_display() {
+        assert_eq!(format!("{}", EventKind::Start), "start");
+        assert_eq!(format!("{}", EventKind::Stop), "stop");
+
+        let msg = EventKind::Message {
+            param_name: Ident::dummy("msg"),
+            param_ty: TypeExpr::String,
+        };
+        assert_eq!(format!("{msg}"), "message(msg: String)");
+    }
+
+    #[test]
+    fn string_template_literal() {
+        let template = StringTemplate::literal("hello".into(), Span::dummy());
+        assert!(!template.has_interpolations());
+        assert_eq!(format!("{template}"), "\"hello\"");
+    }
+
+    #[test]
+    fn string_template_with_interpolation() {
+        let template = StringTemplate {
+            parts: vec![
+                StringPart::Literal("Hello, ".into()),
+                StringPart::Interpolation(Ident::dummy("name")),
+                StringPart::Literal("!".into()),
+            ],
+            span: Span::dummy(),
+        };
+        assert!(template.has_interpolations());
+        assert_eq!(format!("{template}"), "\"Hello, {name}!\"");
+
+        let interps: Vec<_> = template.interpolations().collect();
+        assert_eq!(interps.len(), 1);
+        assert_eq!(interps[0].name, "name");
+    }
+
+    #[test]
+    fn expr_span() {
+        let span = Span::dummy();
+        let expr = Expr::Literal {
+            value: Literal::Int(42),
+            span: span.clone(),
+        };
+        assert_eq!(expr.span(), &span);
+    }
+
+    #[test]
+    fn stmt_span() {
+        let span = Span::dummy();
+        let stmt = Stmt::Return {
+            value: None,
+            span: span.clone(),
+        };
+        assert_eq!(stmt.span(), &span);
+    }
+}

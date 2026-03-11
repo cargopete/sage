@@ -34,11 +34,7 @@ impl TypeExpr {
     pub fn is_primitive(&self) -> bool {
         matches!(
             self,
-            TypeExpr::Int
-                | TypeExpr::Float
-                | TypeExpr::Bool
-                | TypeExpr::String
-                | TypeExpr::Unit
+            TypeExpr::Int | TypeExpr::Float | TypeExpr::Bool | TypeExpr::String | TypeExpr::Unit
         )
     }
 
@@ -55,9 +51,9 @@ impl TypeExpr {
     #[must_use]
     pub fn inner_type(&self) -> Option<&TypeExpr> {
         match self {
-            TypeExpr::List(inner)
-            | TypeExpr::Option(inner)
-            | TypeExpr::Inferred(inner) => Some(inner),
+            TypeExpr::List(inner) | TypeExpr::Option(inner) | TypeExpr::Inferred(inner) => {
+                Some(inner)
+            }
             _ => None,
         }
     }

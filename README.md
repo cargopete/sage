@@ -82,14 +82,14 @@ cargo build --release
 - [x] **TASK-006** — Lexer tests *(comprehensive coverage included in TASK-004/005)*
 
 ### Milestone 3: Parser
-- [ ] **TASK-007** — Define AST types
-- [ ] **TASK-008** — Parser: top-level structure
-- [ ] **TASK-009** — Parser: agent declarations
-- [ ] **TASK-010** — Parser: statements
-- [ ] **TASK-011** — Parser: expressions
-- [ ] **TASK-012** — Parser: function declarations
+- [x] **TASK-007** — Define AST types
+- [x] **TASK-008** — Parser: top-level structure
+- [x] **TASK-009** — Parser: agent declarations
+- [x] **TASK-010** — Parser: statements
+- [x] **TASK-011** — Parser: expressions
+- [x] **TASK-012** — Parser: function declarations
 - [ ] **TASK-013** — Parser error recovery
-- [ ] **TASK-014** — Parser tests
+- [x] **TASK-014** — Parser tests
 
 ### Milestone 4: Name Resolution + Type Checker
 - [ ] **TASK-015** — Name resolver

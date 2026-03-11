@@ -3,7 +3,7 @@
 use logos::Logos;
 
 /// All tokens in the Sage language.
-#[derive(Logos, Debug, Clone, PartialEq)]
+#[derive(Logos, Debug, Clone, PartialEq, Eq, Hash)]
 #[logos(skip r"[ \t\r\n]+")]
 #[logos(skip r"//[^\n]*")]
 pub enum Token {
@@ -389,7 +389,9 @@ mod tests {
 
     #[test]
     fn lex_more_keywords() {
-        let mut lexer = Token::lexer("infer spawn await send emit run fn let return if else for in self true false");
+        let mut lexer = Token::lexer(
+            "infer spawn await send emit run fn let return if else for in self true false",
+        );
         assert_eq!(lexer.next(), Some(Ok(Token::KwInfer)));
         assert_eq!(lexer.next(), Some(Ok(Token::KwSpawn)));
         assert_eq!(lexer.next(), Some(Ok(Token::KwAwait)));
