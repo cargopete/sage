@@ -1,0 +1,382 @@
+//! Error types for the semantic checker.
+
+use miette::{Diagnostic, SourceSpan};
+use sage_types::Span;
+use thiserror::Error;
+
+/// Convert a Sage span to a miette `SourceSpan`.
+fn to_source_span(span: &Span) -> SourceSpan {
+    (span.start, span.end - span.start).into()
+}
+
+/// A semantic error detected during name resolution or type checking.
+#[derive(Debug, Clone, Error, Diagnostic)]
+pub enum CheckError {
+    // =========================================================================
+    // Name resolution errors
+    // =========================================================================
+    #[error("undefined variable `{name}`")]
+    #[diagnostic(code(sage::undefined_variable))]
+    UndefinedVariable {
+        name: String,
+        #[label("not found in this scope")]
+        span: SourceSpan,
+    },
+
+    #[error("undefined agent `{name}`")]
+    #[diagnostic(code(sage::undefined_agent))]
+    UndefinedAgent {
+        name: String,
+        #[label("no agent with this name")]
+        span: SourceSpan,
+    },
+
+    #[error("undefined function `{name}`")]
+    #[diagnostic(code(sage::undefined_function))]
+    UndefinedFunction {
+        name: String,
+        #[label("no function with this name")]
+        span: SourceSpan,
+    },
+
+    #[error("undefined belief `{name}`")]
+    #[diagnostic(code(sage::undefined_belief))]
+    UndefinedBelief {
+        name: String,
+        #[label("agent has no belief with this name")]
+        span: SourceSpan,
+    },
+
+    #[error("duplicate definition of `{name}`")]
+    #[diagnostic(code(sage::duplicate_definition))]
+    DuplicateDefinition {
+        name: String,
+        #[label("already defined")]
+        span: SourceSpan,
+    },
+
+    #[error("`self` used outside of agent context")]
+    #[diagnostic(code(sage::self_outside_agent))]
+    SelfOutsideAgent {
+        #[label("not inside an agent handler")]
+        span: SourceSpan,
+    },
+
+    // =========================================================================
+    // Type errors
+    // =========================================================================
+    #[error("type mismatch: expected `{expected}`, found `{found}`")]
+    #[diagnostic(code(sage::type_mismatch))]
+    TypeMismatch {
+        expected: String,
+        found: String,
+        #[label("expected `{expected}`")]
+        span: SourceSpan,
+    },
+
+    #[error("cannot apply operator `{op}` to types `{left}` and `{right}`")]
+    #[diagnostic(code(sage::invalid_binary_op))]
+    InvalidBinaryOp {
+        op: String,
+        left: String,
+        right: String,
+        #[label("invalid operand types")]
+        span: SourceSpan,
+    },
+
+    #[error("cannot apply operator `{op}` to type `{operand}`")]
+    #[diagnostic(code(sage::invalid_unary_op))]
+    InvalidUnaryOp {
+        op: String,
+        operand: String,
+        #[label("invalid operand type")]
+        span: SourceSpan,
+    },
+
+    #[error("cannot iterate over type `{ty}`")]
+    #[diagnostic(code(sage::not_iterable))]
+    NotIterable {
+        ty: String,
+        #[label("expected List<T>")]
+        span: SourceSpan,
+    },
+
+    #[error("cannot await non-agent type `{ty}`")]
+    #[diagnostic(code(sage::await_non_agent))]
+    AwaitNonAgent {
+        ty: String,
+        #[label("expected Agent<T>")]
+        span: SourceSpan,
+    },
+
+    #[error("cannot send to non-agent type `{ty}`")]
+    #[diagnostic(code(sage::send_non_agent))]
+    SendNonAgent {
+        ty: String,
+        #[label("expected Agent<T>")]
+        span: SourceSpan,
+    },
+
+    #[error("function `{name}` expects {expected} arguments, found {found}")]
+    #[diagnostic(code(sage::wrong_arg_count))]
+    WrongArgCount {
+        name: String,
+        expected: usize,
+        found: usize,
+        #[label("wrong number of arguments")]
+        span: SourceSpan,
+    },
+
+    #[error("missing belief initialization: `{name}`")]
+    #[diagnostic(code(sage::missing_belief_init))]
+    MissingBeliefInit {
+        name: String,
+        #[label("agent requires this belief")]
+        span: SourceSpan,
+    },
+
+    #[error("unknown field `{name}` in agent initialization")]
+    #[diagnostic(code(sage::unknown_field))]
+    UnknownField {
+        name: String,
+        #[label("not a belief of this agent")]
+        span: SourceSpan,
+    },
+
+    #[error("agent `{name}` has no message handler")]
+    #[diagnostic(
+        code(sage::no_message_handler),
+        help("add an `on message(x: T)` handler")
+    )]
+    NoMessageHandler {
+        name: String,
+        #[label("sending to this agent")]
+        span: SourceSpan,
+    },
+
+    // =========================================================================
+    // Entry agent errors
+    // =========================================================================
+    #[error("entry agent `{name}` must have no beliefs")]
+    #[diagnostic(
+        code(sage::entry_agent_has_beliefs),
+        help("entry agents cannot have beliefs since there's no way to initialize them")
+    )]
+    EntryAgentHasBeliefs {
+        name: String,
+        #[label("this agent has beliefs")]
+        span: SourceSpan,
+    },
+
+    #[error("entry agent `{name}` must have an `on start` handler")]
+    #[diagnostic(code(sage::entry_agent_no_start))]
+    EntryAgentNoStart {
+        name: String,
+        #[label("add an `on start` handler")]
+        span: SourceSpan,
+    },
+
+    // =========================================================================
+    // Misc errors
+    // =========================================================================
+    #[error("return statement outside of function")]
+    #[diagnostic(code(sage::return_outside_function))]
+    ReturnOutsideFunction {
+        #[label("not inside a function")]
+        span: SourceSpan,
+    },
+
+    #[error("condition must be Bool, found `{found}`")]
+    #[diagnostic(code(sage::non_bool_condition))]
+    NonBoolCondition {
+        found: String,
+        #[label("expected Bool")]
+        span: SourceSpan,
+    },
+}
+
+impl CheckError {
+    /// Create an undefined variable error.
+    pub fn undefined_variable(name: impl Into<String>, span: &Span) -> Self {
+        Self::UndefinedVariable {
+            name: name.into(),
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create an undefined agent error.
+    pub fn undefined_agent(name: impl Into<String>, span: &Span) -> Self {
+        Self::UndefinedAgent {
+            name: name.into(),
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create an undefined function error.
+    pub fn undefined_function(name: impl Into<String>, span: &Span) -> Self {
+        Self::UndefinedFunction {
+            name: name.into(),
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create an undefined belief error.
+    pub fn undefined_belief(name: impl Into<String>, span: &Span) -> Self {
+        Self::UndefinedBelief {
+            name: name.into(),
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create a duplicate definition error.
+    pub fn duplicate_definition(name: impl Into<String>, span: &Span) -> Self {
+        Self::DuplicateDefinition {
+            name: name.into(),
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create a self-outside-agent error.
+    #[must_use]
+    pub fn self_outside_agent(span: &Span) -> Self {
+        Self::SelfOutsideAgent {
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create a type mismatch error.
+    pub fn type_mismatch(
+        expected: impl Into<String>,
+        found: impl Into<String>,
+        span: &Span,
+    ) -> Self {
+        Self::TypeMismatch {
+            expected: expected.into(),
+            found: found.into(),
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create an invalid binary operator error.
+    pub fn invalid_binary_op(
+        op: impl Into<String>,
+        left: impl Into<String>,
+        right: impl Into<String>,
+        span: &Span,
+    ) -> Self {
+        Self::InvalidBinaryOp {
+            op: op.into(),
+            left: left.into(),
+            right: right.into(),
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create an invalid unary operator error.
+    pub fn invalid_unary_op(
+        op: impl Into<String>,
+        operand: impl Into<String>,
+        span: &Span,
+    ) -> Self {
+        Self::InvalidUnaryOp {
+            op: op.into(),
+            operand: operand.into(),
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create a not-iterable error.
+    pub fn not_iterable(ty: impl Into<String>, span: &Span) -> Self {
+        Self::NotIterable {
+            ty: ty.into(),
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create an await-non-agent error.
+    pub fn await_non_agent(ty: impl Into<String>, span: &Span) -> Self {
+        Self::AwaitNonAgent {
+            ty: ty.into(),
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create a send-non-agent error.
+    pub fn send_non_agent(ty: impl Into<String>, span: &Span) -> Self {
+        Self::SendNonAgent {
+            ty: ty.into(),
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create a wrong argument count error.
+    pub fn wrong_arg_count(
+        name: impl Into<String>,
+        expected: usize,
+        found: usize,
+        span: &Span,
+    ) -> Self {
+        Self::WrongArgCount {
+            name: name.into(),
+            expected,
+            found,
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create a missing belief initialization error.
+    pub fn missing_belief_init(name: impl Into<String>, span: &Span) -> Self {
+        Self::MissingBeliefInit {
+            name: name.into(),
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create an unknown field error.
+    pub fn unknown_field(name: impl Into<String>, span: &Span) -> Self {
+        Self::UnknownField {
+            name: name.into(),
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create a no-message-handler error.
+    pub fn no_message_handler(name: impl Into<String>, span: &Span) -> Self {
+        Self::NoMessageHandler {
+            name: name.into(),
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create an entry-agent-has-beliefs error.
+    pub fn entry_agent_has_beliefs(name: impl Into<String>, span: &Span) -> Self {
+        Self::EntryAgentHasBeliefs {
+            name: name.into(),
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create an entry-agent-no-start error.
+    pub fn entry_agent_no_start(name: impl Into<String>, span: &Span) -> Self {
+        Self::EntryAgentNoStart {
+            name: name.into(),
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create a return-outside-function error.
+    #[must_use]
+    pub fn return_outside_function(span: &Span) -> Self {
+        Self::ReturnOutsideFunction {
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create a non-bool-condition error.
+    pub fn non_bool_condition(found: impl Into<String>, span: &Span) -> Self {
+        Self::NonBoolCondition {
+            found: found.into(),
+            span: to_source_span(span),
+        }
+    }
+}

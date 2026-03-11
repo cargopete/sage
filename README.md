@@ -92,14 +92,14 @@ cargo build --release
 - [x] **TASK-014** — Parser tests
 
 ### Milestone 4: Name Resolution + Type Checker
-- [ ] **TASK-015** — Name resolver
-- [ ] **TASK-016** — Type environment
-- [ ] **TASK-017** — Type checker: agents
-- [ ] **TASK-018** — Type checker: expressions
-- [ ] **TASK-019** — Type checker: statements
-- [ ] **TASK-020** — Type checker: functions
-- [ ] **TASK-021** — Entry agent validation
-- [ ] **TASK-022** — Type checker tests
+- [x] **TASK-015** — Name resolver
+- [x] **TASK-016** — Type environment
+- [x] **TASK-017** — Type checker: agents
+- [x] **TASK-018** — Type checker: expressions
+- [x] **TASK-019** — Type checker: statements
+- [x] **TASK-020** — Type checker: functions
+- [x] **TASK-021** — Entry agent validation
+- [x] **TASK-022** — Type checker tests
 
 ### Milestone 5: Interpreter & Runtime
 - [ ] **TASK-023** — Value enum and runtime environment

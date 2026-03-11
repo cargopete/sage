@@ -11,5 +11,8 @@ sage-types = { path = "../sage-types" }
 miette = { version = "7", features = ["fancy"] }
 thiserror = "2"
 
+[dev-dependencies]
+sage-lexer = { path = "../sage-lexer" }
+
 [lints]
 workspace = true
