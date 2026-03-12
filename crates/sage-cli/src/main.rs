@@ -203,6 +203,132 @@ fn check_file(path: &PathBuf) -> Result<()> {
     Ok(())
 }
 
+/// Find the Sage toolchain directory.
+/// Returns None if no pre-compiled toolchain is available.
+fn find_toolchain() -> Option<PathBuf> {
+    // 1. Check SAGE_TOOLCHAIN env var
+    if let Ok(path) = std::env::var("SAGE_TOOLCHAIN") {
+        let path = PathBuf::from(path);
+        if path.join("libs").exists() && path.join("bin/rustc").exists() {
+            return Some(path);
+        }
+    }
+
+    // 2. Check relative to sage binary (for distribution)
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            // Try ../toolchain (sage is in bin/)
+            let toolchain = parent.parent().map(|p| p.join("toolchain"));
+            if let Some(ref tc) = toolchain {
+                if tc.join("libs").exists() {
+                    return toolchain;
+                }
+            }
+            // Try ./toolchain (sage is in root)
+            let toolchain = parent.join("toolchain");
+            if toolchain.join("libs").exists() {
+                return Some(toolchain);
+            }
+        }
+    }
+
+    None
+}
+
+/// Compile using pre-compiled toolchain (fast path).
+fn compile_with_toolchain(
+    toolchain: &PathBuf,
+    main_rs: &PathBuf,
+    output: &PathBuf,
+    _release: bool, // Unused: pre-compiled libs are always release-optimized
+) -> Result<()> {
+    let rustc = toolchain.join("bin/rustc");
+    let libs_dir = toolchain.join("libs");
+
+    // Set library path for rustc's own dylibs
+    let lib_dir = toolchain.join("lib");
+
+    let mut cmd = Command::new(&rustc);
+
+    // Add library path for rustc's runtime libraries
+    #[cfg(target_os = "macos")]
+    cmd.env("DYLD_LIBRARY_PATH", &lib_dir);
+    #[cfg(target_os = "linux")]
+    cmd.env("LD_LIBRARY_PATH", &lib_dir);
+
+    cmd.arg(main_rs)
+        .arg("--edition").arg("2021")
+        .arg("--crate-type").arg("bin")
+        .arg("-L").arg(format!("dependency={}", libs_dir.display()))
+        .arg("-L").arg(&libs_dir)
+        .arg("-o").arg(output);
+
+    // Pre-compiled libs are always release, so always use -O
+    // Note: LTO is not used because pre-compiled libs don't have bitcode
+    cmd.arg("-O");
+
+    // Add --extern for each dependency (rlib for libraries, dylib for proc-macros)
+    // Track seen crates to avoid duplicates (some crates have multiple versions)
+    let mut seen_crates = std::collections::HashSet::new();
+    for entry in std::fs::read_dir(&libs_dir).into_diagnostic()? {
+        let entry = entry.into_diagnostic()?;
+        let path = entry.path();
+        if let Some(ext) = path.extension() {
+            if ext == "rlib" || ext == "dylib" || ext == "so" {
+                if let Some(name) = parse_lib_name(&path) {
+                    if seen_crates.insert(name.clone()) {
+                        cmd.arg("--extern").arg(format!("{}={}", name, path.display()));
+                    }
+                }
+            }
+        }
+    }
+
+    let output_result = cmd.output().into_diagnostic()?;
+
+    if !output_result.status.success() {
+        let stderr = String::from_utf8_lossy(&output_result.stderr);
+        miette::bail!("rustc failed:\n{}", stderr);
+    }
+
+    Ok(())
+}
+
+/// Parse library filename to crate name.
+/// libfoo_bar-abc123.rlib -> foo_bar
+/// libfoo_bar-abc123.dylib -> foo_bar
+fn parse_lib_name(path: &PathBuf) -> Option<String> {
+    let stem = path.file_stem()?.to_str()?;
+    let name = stem.strip_prefix("lib")?;
+    // Split on hash separator
+    let name = name.split('-').next()?;
+    Some(name.to_string())
+}
+
+/// Compile using cargo (slow path, requires Rust installed).
+fn compile_with_cargo(
+    project_dir: &PathBuf,
+    release: bool,
+) -> Result<()> {
+    let mut cargo_args = vec!["build", "--quiet"];
+    if release {
+        cargo_args.push("--release");
+    }
+
+    let status = Command::new("cargo")
+        .args(&cargo_args)
+        .current_dir(project_dir)
+        .status()
+        .into_diagnostic()
+        .wrap_err("Failed to run cargo build. Is Rust installed?")?;
+
+    if !status.success() {
+        miette::bail!("Cargo build failed");
+    }
+
+    Ok(())
+}
+
 /// Build a Sage program to a native binary.
 /// Returns the path to the binary if compilation succeeded.
 fn build_file(
@@ -311,24 +437,42 @@ fn build_file(
     // Generate Rust code
     let generated = generate(&program, &project_name);
 
+    // Determine compilation mode
+    let toolchain = find_toolchain();
+    let use_toolchain = toolchain.is_some();
+
     // Create output directory
     let project_dir = output_dir.join(&project_name);
-    let src_dir = project_dir.join("src");
-    std::fs::create_dir_all(&src_dir)
+    std::fs::create_dir_all(&project_dir)
         .into_diagnostic()
         .wrap_err("Failed to create output directory")?;
 
-    // Write generated files
-    let main_rs_path = src_dir.join("main.rs");
-    let cargo_toml_path = project_dir.join("Cargo.toml");
+    // For toolchain mode, just write main.rs directly
+    // For cargo mode, write main.rs in src/ and Cargo.toml
+    let (main_rs_path, binary_path) = if use_toolchain {
+        let main_rs = project_dir.join("main.rs");
+        let binary = project_dir.join(&project_name);
+        (main_rs, binary)
+    } else {
+        let src_dir = project_dir.join("src");
+        std::fs::create_dir_all(&src_dir).into_diagnostic()?;
+        let main_rs = src_dir.join("main.rs");
+        let binary_dir = if release { "release" } else { "debug" };
+        let binary = project_dir.join("target").join(binary_dir).join(&project_name);
+        (main_rs, binary)
+    };
 
     std::fs::write(&main_rs_path, &generated.main_rs)
         .into_diagnostic()
         .wrap_err("Failed to write main.rs")?;
 
-    std::fs::write(&cargo_toml_path, &generated.cargo_toml)
-        .into_diagnostic()
-        .wrap_err("Failed to write Cargo.toml")?;
+    // Write Cargo.toml only for cargo mode
+    if !use_toolchain {
+        let cargo_toml_path = project_dir.join("Cargo.toml");
+        std::fs::write(&cargo_toml_path, &generated.cargo_toml)
+            .into_diagnostic()
+            .wrap_err("Failed to write Cargo.toml")?;
+    }
 
     if emit_rust_only {
         if let Some(sp) = spinner {
@@ -338,11 +482,6 @@ fn build_file(
             "  {} Generated {}",
             CHECK,
             style(main_rs_path.display()).dim()
-        );
-        println!(
-            "  {} Generated {}",
-            CHECK,
-            style(cargo_toml_path.display()).dim()
         );
         println!();
         println!(
@@ -355,41 +494,34 @@ fn build_file(
     }
 
     if let Some(ref sp) = spinner {
-        sp.set_message("Building with cargo...");
+        if use_toolchain {
+            sp.set_message("Compiling...");
+        } else {
+            sp.set_message("Building with cargo...");
+        }
     }
 
-    // Compile with cargo
-    let mut cargo_args = vec!["build", "--quiet"];
-    if release {
-        cargo_args.push("--release");
+    // Compile
+    if let Some(ref tc) = toolchain {
+        compile_with_toolchain(tc, &main_rs_path, &binary_path, release)?;
+    } else {
+        compile_with_cargo(&project_dir, release)?;
     }
-
-    let cargo_status = Command::new("cargo")
-        .args(&cargo_args)
-        .current_dir(&project_dir)
-        .status()
-        .into_diagnostic()
-        .wrap_err("Failed to run cargo build")?;
 
     if let Some(sp) = spinner {
         sp.finish_and_clear();
     }
 
-    if !cargo_status.success() {
-        miette::bail!("Cargo build failed");
-    }
-
-    let binary_dir = if release { "release" } else { "debug" };
-    let binary_path = project_dir.join("target").join(binary_dir).join(&project_name);
-
     let total_duration = start_time.elapsed();
 
     if !quiet {
+        let mode = if use_toolchain { "" } else { " (cargo)" };
         println!(
-            "{}{} Compiled {} in {:.2}s",
+            "{}{} Compiled {}{} in {:.2}s",
             SPARKLES,
             style("Done").green().bold(),
             style(&filename).yellow(),
+            style(mode).dim(),
             total_duration.as_secs_f64()
         );
     }

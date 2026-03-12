@@ -2,8 +2,6 @@
 //!
 //! This module provides utilities for generating well-formatted Rust code.
 
-use std::fmt::Write;
-
 /// A code emitter that handles indentation and formatting.
 pub struct Emitter {
     /// The output buffer.
@@ -51,15 +49,6 @@ impl Emitter {
             self.write_indent();
         }
         self.output.push_str(s);
-        self.at_line_start = false;
-    }
-
-    /// Write a formatted value.
-    pub fn write_fmt(&mut self, args: std::fmt::Arguments<'_>) {
-        if self.at_line_start {
-            self.write_indent();
-        }
-        let _ = self.output.write_fmt(args);
         self.at_line_start = false;
     }
 
