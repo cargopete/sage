@@ -79,4 +79,4 @@ echo ""
 echo "Done! Toolchain built in $DIST_DIR ($SIZE)"
 echo ""
 echo "Contents:"
-ls -la "$DIST_DIR/libs" | head -20
+ls "$DIST_DIR/libs" | wc -l | xargs echo "Total files:"
