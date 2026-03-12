@@ -5,10 +5,12 @@ use console::{style, Emoji};
 use indicatif::{ProgressBar, ProgressStyle};
 use miette::{Diagnostic, IntoDiagnostic, Result, Severity, WrapErr};
 use sage_checker::check;
+use sage_codegen::generate;
 use sage_interpreter::{LlmConfig, Runtime, RuntimeConfig};
 use sage_lexer::lex;
 use sage_parser::parse;
 use std::path::PathBuf;
+use std::process::Command;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -37,7 +39,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Run a Sage program
+    /// Run a Sage program (interpreted)
     Run {
         /// Path to the .sg file to run
         file: PathBuf,
@@ -49,6 +51,24 @@ enum Commands {
         /// Quiet mode - minimal output
         #[arg(short, long)]
         quiet: bool,
+    },
+
+    /// Compile a Sage program to a native binary
+    Build {
+        /// Path to the .sg file to compile
+        file: PathBuf,
+
+        /// Build in release mode
+        #[arg(long)]
+        release: bool,
+
+        /// Output directory for generated files
+        #[arg(short, long, default_value = "target/sage")]
+        output: PathBuf,
+
+        /// Only generate Rust code, don't compile
+        #[arg(long)]
+        emit_rust: bool,
     },
 
     /// Check a Sage program for errors without running it
@@ -67,6 +87,12 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Commands::Run { file, mock, quiet } => run_file(&file, mock, quiet).await,
+        Commands::Build {
+            file,
+            release,
+            output,
+            emit_rust,
+        } => build_file(&file, release, &output, emit_rust),
         Commands::Check { file } => check_file(&file),
     }
 }
@@ -303,5 +329,148 @@ fn check_file(path: &PathBuf) -> Result<()> {
         style("in").dim(),
         style(&filename).yellow()
     );
+    Ok(())
+}
+
+/// Build a Sage program to a native binary.
+fn build_file(path: &PathBuf, release: bool, output_dir: &PathBuf, emit_rust_only: bool) -> Result<()> {
+    let start_time = Instant::now();
+
+    print_banner();
+
+    let source = std::fs::read_to_string(path)
+        .into_diagnostic()
+        .wrap_err_with(|| format!("Failed to read file: {}", path.display()))?;
+
+    let filename = path
+        .file_name()
+        .map_or_else(|| "unknown".to_string(), |s| s.to_string_lossy().into_owned());
+
+    let project_name = path
+        .file_stem()
+        .map_or_else(|| "sage_program".to_string(), |s| s.to_string_lossy().into_owned())
+        .replace('-', "_");
+
+    println!(
+        "{}Compiling {}",
+        GEAR,
+        style(&filename).yellow().bold()
+    );
+    println!();
+
+    // Lex
+    let lex_result = match lex(&source) {
+        Ok(result) => result,
+        Err(err) => {
+            let report = miette::Report::new(err).with_source_code(source);
+            return Err(report);
+        }
+    };
+
+    // Parse
+    let source_arc: Arc<str> = Arc::from(source.as_str());
+    let (program, parse_errors) = parse(lex_result.tokens(), Arc::clone(&source_arc));
+
+    if !parse_errors.is_empty() {
+        for err in &parse_errors {
+            eprintln!("Parse error: {err}");
+        }
+        miette::bail!("Parse errors in {filename}");
+    }
+
+    let program = program.ok_or_else(|| miette::miette!("Failed to parse program"))?;
+
+    // Type check
+    let check_result = check(&program);
+    let mut has_errors = false;
+    for err in &check_result.errors {
+        let report = miette::Report::new(err.clone()).with_source_code(source.clone());
+        eprintln!("{report:?}");
+        if err.severity().unwrap_or(Severity::Error) == Severity::Error {
+            has_errors = true;
+        }
+    }
+    if has_errors {
+        miette::bail!("Type errors in {filename}");
+    }
+
+    // Generate Rust code
+    let generated = generate(&program, &project_name);
+
+    // Create output directory
+    let project_dir = output_dir.join(&project_name);
+    let src_dir = project_dir.join("src");
+    std::fs::create_dir_all(&src_dir)
+        .into_diagnostic()
+        .wrap_err("Failed to create output directory")?;
+
+    // Write generated files
+    let main_rs_path = src_dir.join("main.rs");
+    let cargo_toml_path = project_dir.join("Cargo.toml");
+
+    std::fs::write(&main_rs_path, &generated.main_rs)
+        .into_diagnostic()
+        .wrap_err("Failed to write main.rs")?;
+
+    std::fs::write(&cargo_toml_path, &generated.cargo_toml)
+        .into_diagnostic()
+        .wrap_err("Failed to write Cargo.toml")?;
+
+    println!(
+        "  {} Generated {}",
+        CHECK,
+        style(main_rs_path.display()).dim()
+    );
+    println!(
+        "  {} Generated {}",
+        CHECK,
+        style(cargo_toml_path.display()).dim()
+    );
+
+    if emit_rust_only {
+        println!();
+        println!(
+            "{}{} Rust code generated in {}",
+            SPARKLES,
+            style("Done").green().bold(),
+            style(project_dir.display()).yellow()
+        );
+        return Ok(());
+    }
+
+    // Compile with cargo
+    println!();
+    println!("  {} Building with cargo...", GEAR);
+
+    let mut cargo_args = vec!["build"];
+    if release {
+        cargo_args.push("--release");
+    }
+
+    let cargo_status = Command::new("cargo")
+        .args(&cargo_args)
+        .current_dir(&project_dir)
+        .status()
+        .into_diagnostic()
+        .wrap_err("Failed to run cargo build")?;
+
+    if !cargo_status.success() {
+        miette::bail!("Cargo build failed");
+    }
+
+    let binary_dir = if release { "release" } else { "debug" };
+    let binary_path = project_dir.join("target").join(binary_dir).join(&project_name);
+
+    let total_duration = start_time.elapsed();
+
+    println!();
+    println!(
+        "{}{} Built {} in {:.2}s",
+        SPARKLES,
+        style("Done").green().bold(),
+        style(binary_path.display()).yellow(),
+        total_duration.as_secs_f64()
+    );
+
     Ok(())
 }

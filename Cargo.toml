@@ -5,7 +5,7 @@ members = [
     "crates/sage-types",
     "crates/sage-checker",
     "crates/sage-interpreter",
-    "crates/sage-cli",
+    "crates/sage-cli", "crates/sage-runtime", "crates/sage-codegen",
 ]
 resolver = "2"
 

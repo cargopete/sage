@@ -1,0 +1,17 @@
+[package]
+name = "sage-codegen"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Code generator for compiling Sage to Rust"
+
+[dependencies]
+sage-parser = { path = "../sage-parser" }
+sage-types = { path = "../sage-types" }
+
+[dev-dependencies]
+sage-lexer = { path = "../sage-lexer" }
+
+[lints]
+workspace = true
