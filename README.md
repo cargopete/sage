@@ -11,6 +11,7 @@
 
 <p align="center">
   <a href="#status">Status</a> •
+  <a href="#language-syntax">Syntax</a> •
   <a href="#building">Building</a> •
   <a href="#implementation-progress">Progress</a> •
   <a href="docs/RFC-0001-poc.md">Specification</a>
@@ -29,25 +30,26 @@ agent Researcher {
     on start {
         let summary: Inferred<String> = infer(
             "Write a concise 2-sentence summary of: {self.topic}"
-        )
-        emit(summary)
+        );
+        emit(summary);
     }
 }
 
 agent Coordinator {
     on start {
-        let r1 = spawn Researcher { topic: "quantum computing" }
-        let r2 = spawn Researcher { topic: "CRISPR gene editing" }
+        let r1 = spawn Researcher { topic: "quantum computing" };
+        let r2 = spawn Researcher { topic: "CRISPR gene editing" };
 
-        let s1 = await r1
-        let s2 = await r2
+        let s1 = await r1;
+        let s2 = await r2;
 
-        print(s1)
-        print(s2)
+        print(s1);
+        print(s2);
+        emit(0);
     }
 }
 
-run Coordinator
+run Coordinator;
 ```
 
 ## Status
@@ -62,6 +64,96 @@ run Coordinator
 | **Implementation** | Rust |
 
 See [docs/RFC-0001-poc.md](docs/RFC-0001-poc.md) for the full specification.
+
+## Language Syntax
+
+### Agents & Beliefs
+
+Agents are the core abstraction — autonomous units with beliefs (state) and event handlers:
+
+```sage
+agent Worker {
+    belief value: Int
+    belief multiplier: Int
+
+    on start {
+        let result = self.value * self.multiplier;
+        emit(result);
+    }
+}
+
+agent Main {
+    on start {
+        let w = spawn Worker { value: 10, multiplier: 2 };
+        let result = await w;
+        emit(result);
+    }
+}
+
+run Main;
+```
+
+### Functions
+
+```sage
+fn factorial(n: Int) -> Int {
+    if n <= 1 {
+        return 1;
+    }
+    return n * factorial(n - 1);
+}
+```
+
+### Control Flow
+
+```sage
+if x > 5 {
+    emit(1);
+} else {
+    emit(0);
+}
+
+for item in [1, 2, 3] {
+    print(str(item));
+}
+```
+
+### Types
+
+| Type | Description |
+|------|-------------|
+| `Int` | Integer numbers |
+| `Float` | Floating-point numbers |
+| `Bool` | `true` or `false` |
+| `String` | Text strings |
+| `Unit` | No value (like Rust's `()`) |
+| `List<T>` | Lists, e.g., `[1, 2, 3]` |
+| `Inferred<T>` | LLM inference results |
+
+### Expressions
+
+| Operator | Description |
+|----------|-------------|
+| `+`, `-`, `*`, `/` | Arithmetic |
+| `==`, `!=`, `<`, `>`, `<=`, `>=` | Comparison |
+| `&&`, `\|\|`, `!` | Logical |
+| `++` | String concatenation |
+| `"Hello, {name}!"` | String interpolation |
+
+### Built-in Functions
+
+| Function | Description |
+|----------|-------------|
+| `print(msg)` | Output to console |
+| `str(value)` | Convert any type to string |
+| `len(list)` | Get list length |
+| `infer(prompt)` | LLM inference |
+
+### Semicolons
+
+Following Rust conventions:
+- **Required** after: `let`, `return`, assignments, expression statements, `run`
+- **Not required** after block statements: `if`/`else`, `for`
 
 ## Building
 
