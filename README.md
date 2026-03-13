@@ -359,6 +359,7 @@ sage check my_project/
 | `SAGE_API_KEY` | OpenAI API key for LLM inference | Required for `infer` |
 | `SAGE_LLM_URL` | Base URL for OpenAI-compatible API | `https://api.openai.com/v1` |
 | `SAGE_MODEL` | Model to use | `gpt-4o-mini` |
+| `SAGE_INFER_RETRIES` | Max retries for structured inference | `3` |
 | `SAGE_TOOLCHAIN` | Path to pre-compiled toolchain | Auto-detected |
 
 ## Architecture
