@@ -55,11 +55,11 @@ run Coordinator;
 
 ## Status
 
-**v0.1.1 released** — Compiles to native binaries. No Rust installation required.
+**v0.2.0 released** — User-defined types, pattern matching, and agent message passing.
 
 | | |
 |---|---|
-| **Latest** | [v0.1.1](https://github.com/sagelang/sage/releases/tag/v0.1.1) |
+| **Latest** | [v0.2.0](https://github.com/sagelang/sage/releases/tag/v0.2.0) |
 | **Extension** | `.sg` |
 | **Platforms** | macOS (ARM), Linux (x86_64, ARM) |
 | **Build time** | ~0.5s |

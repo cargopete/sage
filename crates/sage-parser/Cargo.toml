@@ -7,8 +7,8 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-sage-lexer = { path = "../sage-lexer", version = "0.1.0" }
-sage-types = { path = "../sage-types", version = "0.1.0" }
+sage-lexer = { path = "../sage-lexer", version = "0.2.0" }
+sage-types = { path = "../sage-types", version = "0.2.0" }
 chumsky = "0.9"
 
 [dev-dependencies]
