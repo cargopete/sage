@@ -54,14 +54,14 @@ run Coordinator;
 
 ## Status
 
-**v0.1.0 released** — Compiles to native binaries via Rust. No Rust installation required.
+**v0.1.1 released** — Compiles to native binaries. No Rust installation required.
 
 | | |
 |---|---|
-| **Latest** | [v0.1.0](https://github.com/cargopete/sage/releases/tag/v0.1.0) |
+| **Latest** | [v0.1.1](https://github.com/cargopete/sage/releases/tag/v0.1.1) |
 | **Extension** | `.sg` |
 | **Platforms** | macOS (ARM), Linux (x86_64, ARM) |
-| **Build time** | ~0.4s |
+| **Build time** | ~0.5s |
 
 See [docs/RFC-0001-poc.md](docs/RFC-0001-poc.md) for the language specification.
 
@@ -161,31 +161,25 @@ Following Rust conventions:
 
 ## Installation
 
-### Quick Install (macOS/Linux)
+### Prerequisites
+
+**macOS:** Xcode Command Line Tools (for linking)
+```bash
+xcode-select --install
+```
+
+**Linux (Debian/Ubuntu):**
+```bash
+sudo apt install gcc libssl-dev
+```
+
+### Quick Install
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/cargopete/sage/main/scripts/install.sh | bash
 ```
 
-This downloads the pre-compiled toolchain (~100-230MB) - no Rust required.
-
-### Manual Install
-
-**macOS (Apple Silicon):**
-```bash
-curl -fsSL https://github.com/cargopete/sage/releases/latest/download/sage-v0.1.0-aarch64-apple-darwin.tar.gz | tar xz
-sudo mv sage-v0.1.0-aarch64-apple-darwin /usr/local/sage
-sudo ln -sf /usr/local/sage/bin/sage /usr/local/bin/sage
-echo 'export SAGE_TOOLCHAIN=/usr/local/sage/toolchain' >> ~/.zshrc
-```
-
-**Linux (x86_64):**
-```bash
-curl -fsSL https://github.com/cargopete/sage/releases/latest/download/sage-v0.1.0-x86_64-unknown-linux-gnu.tar.gz | tar xz
-sudo mv sage-v0.1.0-x86_64-unknown-linux-gnu /usr/local/sage
-sudo ln -sf /usr/local/sage/bin/sage /usr/local/bin/sage
-echo 'export SAGE_TOOLCHAIN=/usr/local/sage/toolchain' >> ~/.bashrc
-```
+This downloads the pre-compiled toolchain (~100-230MB) — no Rust required.
 
 ### From Source (for contributors)
 
