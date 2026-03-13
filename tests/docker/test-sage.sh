@@ -74,11 +74,16 @@ echo
 
 # Test 6: Build to binary
 echo "Test 6: Building to standalone binary..."
+mkdir -p ~/test/out
 if sage build ~/test/simple.sg -o ~/test/out; then
-    if [ -f ~/test/out/simple ]; then
+    echo "  Contents of ~/test/out:"
+    ls -la ~/test/out/ || true
+    ls -la ~/test/out/simple/ 2>/dev/null || true
+    # Binary is at ~/test/out/simple/simple
+    if [ -f ~/test/out/simple/simple ]; then
         echo "  ✅ Binary created"
         # Run the compiled binary
-        if binary_output=$(~/test/out/simple 2>&1); then
+        if binary_output=$(~/test/out/simple/simple 2>&1); then
             echo "  Output: $binary_output"
             echo "  ✅ Binary executed successfully"
         else

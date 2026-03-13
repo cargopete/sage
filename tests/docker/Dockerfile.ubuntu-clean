@@ -15,10 +15,14 @@ FROM ubuntu:22.04
 ARG SAGE_VERSION=""
 
 # Minimal dependencies - explicitly NO Rust
+# gcc/binutils needed for linking, libssl-dev for reqwest/TLS
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
     sudo \
+    gcc \
+    libc6-dev \
+    libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Verify Rust is NOT installed
