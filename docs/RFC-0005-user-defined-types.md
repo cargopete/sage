@@ -1,6 +1,6 @@
 # RFC-0005: User-Defined Types
 
-- **Status:** Draft
+- **Status:** Implemented
 - **Created:** 2026-03-13
 - **Author:** Sage Contributors
 

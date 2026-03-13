@@ -177,7 +177,56 @@ for item in [1, 2, 3] {
 while count < 10 {
     count = count + 1;
 }
+
+loop {
+    // runs indefinitely until break
+    if done {
+        break;
+    }
+}
 ```
+
+### Agent Message Passing
+
+Agents can receive typed messages from their mailbox, enabling actor-model patterns:
+
+```sage
+enum WorkerMsg {
+    Task,
+    Ping,
+    Shutdown,
+}
+
+agent Worker receives WorkerMsg {
+    id: Int
+
+    on start {
+        loop {
+            let msg: WorkerMsg = receive();
+            match msg {
+                Task => print("Processing task"),
+                Ping => print("Worker alive"),
+                Shutdown => break,
+            }
+        }
+        emit(0);
+    }
+}
+
+agent Coordinator {
+    on start {
+        let w = spawn Worker { id: 1 };
+        send(w, Task);
+        send(w, Shutdown);
+        await w;
+        emit(0);
+    }
+}
+
+run Coordinator;
+```
+
+The `receives` clause declares the message type an agent accepts. `receive()` blocks until a message arrives. Agents without `receives` are pure spawn/await agents.
 
 ### Types
 
@@ -257,6 +306,8 @@ fn classify(n: Int) -> String {
 | `str(value)` | Convert any type to string |
 | `len(list)` | Get list length |
 | `infer(prompt)` | LLM inference |
+| `receive()` | Receive message from mailbox (agents only) |
+| `send(handle, msg)` | Send message to agent |
 
 ### Semicolons
 
@@ -400,6 +451,8 @@ sage/
 ├── docs/
 │   ├── RFC-0001-poc.md    # Language specification
 │   ├── RFC-0002-*.md      # Multi-file project structure
+│   ├── RFC-0005-*.md      # User-defined types
+│   ├── RFC-0006-*.md      # Agent message passing
 │   └── VISION.md          # Roadmap and future direction
 ├── tests/
 │   └── docker/            # Installation verification tests
