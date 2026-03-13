@@ -441,10 +441,7 @@ mod tests {
         let (_, result) = check_source(source);
         // Should have exactly one warning for unused belief
         assert_eq!(result.errors.len(), 1);
-        assert!(matches!(
-            result.errors[0],
-            CheckError::UnusedBelief { .. }
-        ));
+        assert!(matches!(result.errors[0], CheckError::UnusedBelief { .. }));
     }
 
     #[test]
@@ -618,10 +615,7 @@ run Main;
 
         let (_, result) = check_source(source);
         assert!(!result.errors.is_empty());
-        assert!(matches!(
-            result.errors[0],
-            CheckError::MissingField { .. }
-        ));
+        assert!(matches!(result.errors[0], CheckError::MissingField { .. }));
     }
 
     #[test]
@@ -643,10 +637,7 @@ run Main;
 
         let (_, result) = check_source(source);
         assert!(!result.errors.is_empty());
-        assert!(matches!(
-            result.errors[0],
-            CheckError::UnknownField { .. }
-        ));
+        assert!(matches!(result.errors[0], CheckError::UnknownField { .. }));
     }
 
     #[test]
@@ -663,10 +654,7 @@ run Main;
 
         let (_, result) = check_source(source);
         assert!(!result.errors.is_empty());
-        assert!(matches!(
-            result.errors[0],
-            CheckError::UndefinedType { .. }
-        ));
+        assert!(matches!(result.errors[0], CheckError::UndefinedType { .. }));
     }
 
     #[test]
@@ -709,10 +697,7 @@ run Main;
 
         let (_, result) = check_source(source);
         assert!(!result.errors.is_empty());
-        assert!(matches!(
-            result.errors[0],
-            CheckError::TypeMismatch { .. }
-        ));
+        assert!(matches!(result.errors[0], CheckError::TypeMismatch { .. }));
     }
 
     #[test]
@@ -932,10 +917,7 @@ run Main;
 
         let (_, result) = check_source(source);
         assert!(!result.errors.is_empty());
-        assert!(matches!(
-            result.errors[0],
-            CheckError::TypeMismatch { .. }
-        ));
+        assert!(matches!(result.errors[0], CheckError::TypeMismatch { .. }));
     }
 
     #[test]

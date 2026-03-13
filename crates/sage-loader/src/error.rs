@@ -34,10 +34,7 @@ pub enum LoadError {
     /// Parse errors in a module.
     #[error("parse error in '{file}'")]
     #[diagnostic(code(sage::loader::parse_error))]
-    ParseError {
-        file: PathBuf,
-        errors: Vec<String>,
-    },
+    ParseError { file: PathBuf, errors: Vec<String> },
 
     /// Circular dependency between modules.
     #[error("circular dependency detected")]

@@ -219,11 +219,7 @@ impl Checker {
                 continue;
             }
 
-            let variants: Vec<String> = enum_decl
-                .variants
-                .iter()
-                .map(|v| v.name.clone())
-                .collect();
+            let variants: Vec<String> = enum_decl.variants.iter().map(|v| v.name.clone()).collect();
 
             self.symbols.define_enum(EnumInfo {
                 name: enum_decl.name.name.clone(),
@@ -498,8 +494,7 @@ impl Checker {
 
             Stmt::Break { span } => {
                 if !self.in_loop {
-                    self.errors
-                        .push(CheckError::break_outside_loop(span));
+                    self.errors.push(CheckError::break_outside_loop(span));
                 }
             }
 
@@ -588,7 +583,11 @@ impl Checker {
                 Type::Error
             }
 
-            Expr::Infer { template, result_ty, .. } => {
+            Expr::Infer {
+                template,
+                result_ty,
+                ..
+            } => {
                 // Track belief usage in template interpolations
                 for part in &template.parts {
                     if let sage_parser::StringPart::Interpolation(ident) = part {
@@ -727,14 +726,13 @@ impl Checker {
                                     if agent.beliefs.contains_key(field) {
                                         self.used_beliefs.insert(field.to_string());
                                     } else {
-                                        self.errors.push(CheckError::undefined_belief(
-                                            field,
-                                            &ident.span,
-                                        ));
+                                        self.errors
+                                            .push(CheckError::undefined_belief(field, &ident.span));
                                     }
                                 }
                             } else {
-                                self.errors.push(CheckError::self_outside_agent(&ident.span));
+                                self.errors
+                                    .push(CheckError::self_outside_agent(&ident.span));
                             }
                         } else {
                             // Regular variable reference
@@ -745,7 +743,11 @@ impl Checker {
                 Type::String
             }
 
-            Expr::Match { scrutinee, arms, span } => {
+            Expr::Match {
+                scrutinee,
+                arms,
+                span,
+            } => {
                 let scrutinee_ty = self.check_expr(scrutinee);
 
                 // Track covered patterns for exhaustiveness
@@ -768,7 +770,10 @@ impl Checker {
                         Pattern::Variant { variant, .. } => {
                             covered_variants.insert(variant.name.clone());
                         }
-                        Pattern::Literal { value: Literal::Bool(b), .. } => {
+                        Pattern::Literal {
+                            value: Literal::Bool(b),
+                            ..
+                        } => {
                             if *b {
                                 covered_bool_true = true;
                             } else {
@@ -795,17 +800,18 @@ impl Checker {
                         Type::Named(name) => {
                             // Check if it's an enum and all variants are covered
                             if let Some(enum_info) = self.symbols.get_enum(name) {
-                                enum_info.variants.iter().all(|v| covered_variants.contains(v))
+                                enum_info
+                                    .variants
+                                    .iter()
+                                    .all(|v| covered_variants.contains(v))
                             } else {
                                 // Not an enum - needs wildcard
                                 false
                             }
                         }
-                        Type::Bool => {
-                            covered_bool_true && covered_bool_false
-                        }
+                        Type::Bool => covered_bool_true && covered_bool_false,
                         Type::Error => true, // Don't report exhaustiveness errors on error types
-                        _ => false, // Other types need a wildcard to be exhaustive
+                        _ => false,          // Other types need a wildcard to be exhaustive
                     };
 
                     if !is_exhaustive {
@@ -861,7 +867,11 @@ impl Checker {
                 Type::Named(name.name.clone())
             }
 
-            Expr::FieldAccess { object, field, span } => {
+            Expr::FieldAccess {
+                object,
+                field,
+                span,
+            } => {
                 let obj_ty = self.check_expr(object);
 
                 // Get the record name from the type
@@ -882,7 +892,8 @@ impl Checker {
                     if let Some(field_ty) = record_info.fields.get(&field.name) {
                         field_ty.clone()
                     } else {
-                        self.errors.push(CheckError::unknown_field(&field.name, span));
+                        self.errors
+                            .push(CheckError::unknown_field(&field.name, span));
                         Type::Error
                     }
                 } else {
@@ -1049,7 +1060,11 @@ impl Checker {
                 // Binding pattern introduces a variable with the scrutinee's type
                 self.define_var(&name.name, scrutinee_ty.clone());
             }
-            Pattern::Variant { enum_name, variant, span } => {
+            Pattern::Variant {
+                enum_name,
+                variant,
+                span,
+            } => {
                 // Check that the scrutinee is the correct enum type
                 let expected_enum = match scrutinee_ty {
                     Type::Named(name) => Some(name.clone()),
@@ -1080,7 +1095,8 @@ impl Checker {
                             ));
                         }
                     } else {
-                        self.errors.push(CheckError::undefined_type(&enum_name_str.name, span));
+                        self.errors
+                            .push(CheckError::undefined_type(&enum_name_str.name, span));
                     }
                 } else {
                     // Unqualified variant: just `Active`
@@ -1265,10 +1281,8 @@ impl Checker {
         let entry_name = &run_agent.name;
 
         let Some(agent) = self.symbols.get_agent(entry_name).cloned() else {
-            self.errors.push(CheckError::undefined_agent(
-                entry_name,
-                &run_agent.span,
-            ));
+            self.errors
+                .push(CheckError::undefined_agent(entry_name, &run_agent.span));
             return;
         };
 
@@ -1425,10 +1439,8 @@ impl MultiModuleChecker {
             let full_name = Self::make_qualified_name(module_path, &agent.name.name);
 
             if self.symbols.has_agent(&full_name) {
-                self.errors.push(CheckError::duplicate_definition(
-                    &full_name,
-                    &agent.span,
-                ));
+                self.errors
+                    .push(CheckError::duplicate_definition(&full_name, &agent.span));
                 continue;
             }
 
@@ -1467,10 +1479,8 @@ impl MultiModuleChecker {
             let full_name = Self::make_qualified_name(module_path, &func.name.name);
 
             if self.symbols.has_function(&full_name) {
-                self.errors.push(CheckError::duplicate_definition(
-                    &full_name,
-                    &func.span,
-                ));
+                self.errors
+                    .push(CheckError::duplicate_definition(&full_name, &func.span));
                 continue;
             }
 
@@ -1496,10 +1506,8 @@ impl MultiModuleChecker {
             let full_name = Self::make_qualified_name(module_path, &record.name.name);
 
             if self.symbols.has_record(&full_name) {
-                self.errors.push(CheckError::duplicate_definition(
-                    &full_name,
-                    &record.span,
-                ));
+                self.errors
+                    .push(CheckError::duplicate_definition(&full_name, &record.span));
                 continue;
             }
 
@@ -1532,11 +1540,7 @@ impl MultiModuleChecker {
                 continue;
             }
 
-            let variants: Vec<String> = enum_decl
-                .variants
-                .iter()
-                .map(|v| v.name.clone())
-                .collect();
+            let variants: Vec<String> = enum_decl.variants.iter().map(|v| v.name.clone()).collect();
 
             self.symbols.define_enum(EnumInfo {
                 name: enum_decl.name.name.clone(),
@@ -1569,12 +1573,7 @@ impl MultiModuleChecker {
         }
     }
 
-    fn resolve_imports(
-        &mut self,
-        module_path: &ModulePath,
-        program: &Program,
-        tree: &ModuleTree,
-    ) {
+    fn resolve_imports(&mut self, module_path: &ModulePath, program: &Program, tree: &ModuleTree) {
         let mut module_imports: HashMap<String, (ModulePath, String)> = HashMap::new();
 
         for use_decl in &program.use_decls {
@@ -1601,7 +1600,13 @@ impl MultiModuleChecker {
                         };
 
                         // Verify the import is valid
-                        if self.verify_import(&target_module, &item_name, use_decl.is_pub, module_path, &use_decl.span) {
+                        if self.verify_import(
+                            &target_module,
+                            &item_name,
+                            use_decl.is_pub,
+                            module_path,
+                            &use_decl.span,
+                        ) {
                             module_imports.insert(local_name, (target_module, item_name));
                         }
                     }
@@ -1613,8 +1618,15 @@ impl MultiModuleChecker {
                             .as_ref()
                             .map_or_else(|| item.name.clone(), |a| a.name.clone());
 
-                        if self.verify_import(&target_path, &item.name, use_decl.is_pub, module_path, &use_decl.span) {
-                            module_imports.insert(local_name, (target_path.clone(), item.name.clone()));
+                        if self.verify_import(
+                            &target_path,
+                            &item.name,
+                            use_decl.is_pub,
+                            module_path,
+                            &use_decl.span,
+                        ) {
+                            module_imports
+                                .insert(local_name, (target_path.clone(), item.name.clone()));
                         }
                     }
                 }
@@ -1771,11 +1783,8 @@ impl MultiModuleChecker {
         let module_imports = self.imports.get(module_path).cloned().unwrap_or_default();
 
         let (errors, inferred_emit_types) = {
-            let mut module_checker = ModuleChecker::new(
-                &self.symbols,
-                module_path.clone(),
-                module_imports,
-            );
+            let mut module_checker =
+                ModuleChecker::new(&self.symbols, module_path.clone(), module_imports);
 
             module_checker.check_program(program);
 
@@ -1800,15 +1809,14 @@ impl MultiModuleChecker {
         let entry_name = &run_agent.name;
 
         // Look up the agent (it should be in the root module)
-        let agent = self.symbols.iter_agents().find(|(_, info)| {
-            info.module_path.is_empty() && info.name == *entry_name
-        });
+        let agent = self
+            .symbols
+            .iter_agents()
+            .find(|(_, info)| info.module_path.is_empty() && info.name == *entry_name);
 
         let Some((_, agent)) = agent else {
-            self.errors.push(CheckError::undefined_agent(
-                entry_name,
-                &run_agent.span,
-            ));
+            self.errors
+                .push(CheckError::undefined_agent(entry_name, &run_agent.span));
             return;
         };
 
@@ -1899,7 +1907,11 @@ impl<'a> ModuleChecker<'a> {
         for handler in &agent.handlers {
             self.push_scope();
 
-            if let EventKind::Message { param_name, param_ty } = &handler.event {
+            if let EventKind::Message {
+                param_name,
+                param_ty,
+            } = &handler.event
+            {
                 let ty = resolve_type(param_ty);
                 self.define_var(&param_name.name, ty);
             }
@@ -1911,7 +1923,8 @@ impl<'a> ModuleChecker<'a> {
         // Check for unused beliefs
         for belief in &agent.beliefs {
             if !self.used_beliefs.contains(&belief.name.name) {
-                self.errors.push(CheckError::unused_belief(&belief.name.name, &belief.span));
+                self.errors
+                    .push(CheckError::unused_belief(&belief.name.name, &belief.span));
             }
         }
 
@@ -1946,7 +1959,9 @@ impl<'a> ModuleChecker<'a> {
     #[allow(clippy::too_many_lines)]
     fn check_stmt(&mut self, stmt: &Stmt) {
         match stmt {
-            Stmt::Let { name, ty, value, .. } => {
+            Stmt::Let {
+                name, ty, value, ..
+            } => {
                 let value_ty = self.check_expr(value);
                 let declared_ty = ty.as_ref().map(resolve_type);
 
@@ -1999,10 +2014,16 @@ impl<'a> ModuleChecker<'a> {
                 }
             }
 
-            Stmt::If { condition, then_block, else_block, span } => {
+            Stmt::If {
+                condition,
+                then_block,
+                else_block,
+                span,
+            } => {
                 let cond_ty = self.check_expr(condition);
                 if !cond_ty.is_compatible_with(&Type::Bool) {
-                    self.errors.push(CheckError::non_bool_condition(cond_ty.to_string(), span));
+                    self.errors
+                        .push(CheckError::non_bool_condition(cond_ty.to_string(), span));
                 }
 
                 self.push_scope();
@@ -2023,14 +2044,20 @@ impl<'a> ModuleChecker<'a> {
                 }
             }
 
-            Stmt::For { var, iter, body, span } => {
+            Stmt::For {
+                var,
+                iter,
+                body,
+                span,
+            } => {
                 let iter_ty = self.check_expr(iter);
 
                 let elem_ty = if let Some(elem) = iter_ty.list_element() {
                     elem.clone()
                 } else {
                     if !iter_ty.is_error() {
-                        self.errors.push(CheckError::not_iterable(iter_ty.to_string(), span));
+                        self.errors
+                            .push(CheckError::not_iterable(iter_ty.to_string(), span));
                     }
                     Type::Error
                 };
@@ -2044,10 +2071,15 @@ impl<'a> ModuleChecker<'a> {
                 self.in_loop = was_in_loop;
             }
 
-            Stmt::While { condition, body, span } => {
+            Stmt::While {
+                condition,
+                body,
+                span,
+            } => {
                 let cond_ty = self.check_expr(condition);
                 if !cond_ty.is_compatible_with(&Type::Bool) {
-                    self.errors.push(CheckError::non_bool_condition(cond_ty.to_string(), span));
+                    self.errors
+                        .push(CheckError::non_bool_condition(cond_ty.to_string(), span));
                 }
 
                 let was_in_loop = self.in_loop;
@@ -2110,7 +2142,12 @@ impl<'a> ModuleChecker<'a> {
                 }
             }
 
-            Expr::Binary { op, left, right, span } => {
+            Expr::Binary {
+                op,
+                left,
+                right,
+                span,
+            } => {
                 let left_ty = self.check_expr(left);
                 let right_ty = self.check_expr(right);
                 self.check_binary_op(*op, &left_ty, &right_ty, span)
@@ -2130,7 +2167,8 @@ impl<'a> ModuleChecker<'a> {
                 };
 
                 // Clone the belief type to avoid holding borrow across mutation
-                let belief_type = self.lookup_agent(agent_name)
+                let belief_type = self
+                    .lookup_agent(agent_name)
                     .and_then(|agent| agent.beliefs.get(&field.name).cloned());
 
                 if let Some(ty) = belief_type {
@@ -2139,18 +2177,24 @@ impl<'a> ModuleChecker<'a> {
                 } else {
                     // Check if agent exists at all
                     if self.lookup_agent(agent_name).is_some() {
-                        self.errors.push(CheckError::undefined_belief(&field.name, span));
+                        self.errors
+                            .push(CheckError::undefined_belief(&field.name, span));
                     }
                     Type::Error
                 }
             }
 
             Expr::SelfMethodCall { method, span, .. } => {
-                self.errors.push(CheckError::undefined_function(&method.name, span));
+                self.errors
+                    .push(CheckError::undefined_function(&method.name, span));
                 Type::Error
             }
 
-            Expr::Infer { template, result_ty, .. } => {
+            Expr::Infer {
+                template,
+                result_ty,
+                ..
+            } => {
                 for part in &template.parts {
                     if let sage_parser::StringPart::Interpolation(ident) = part {
                         if let Some(field) = ident.name.strip_prefix("self.") {
@@ -2162,10 +2206,15 @@ impl<'a> ModuleChecker<'a> {
                 Type::Inferred(Box::new(inner))
             }
 
-            Expr::Spawn { agent, fields, span } => {
+            Expr::Spawn {
+                agent,
+                fields,
+                span,
+            } => {
                 let agent_info = self.lookup_agent(&agent.name);
                 let Some(agent_info) = agent_info else {
-                    self.errors.push(CheckError::undefined_agent(&agent.name, span));
+                    self.errors
+                        .push(CheckError::undefined_agent(&agent.name, span));
                     return Type::Error;
                 };
                 let agent_info = agent_info.clone();
@@ -2191,13 +2240,15 @@ impl<'a> ModuleChecker<'a> {
                             ));
                         }
                     } else {
-                        self.errors.push(CheckError::unknown_field(field_name, &field.span));
+                        self.errors
+                            .push(CheckError::unknown_field(field_name, &field.span));
                     }
                 }
 
                 for (name, was_provided) in &provided {
                     if !was_provided {
-                        self.errors.push(CheckError::missing_belief_init(name, span));
+                        self.errors
+                            .push(CheckError::missing_belief_init(name, span));
                     }
                 }
 
@@ -2213,13 +2264,18 @@ impl<'a> ModuleChecker<'a> {
                         .unwrap_or(Type::String)
                 } else {
                     if !handle_ty.is_error() {
-                        self.errors.push(CheckError::await_non_agent(handle_ty.to_string(), span));
+                        self.errors
+                            .push(CheckError::await_non_agent(handle_ty.to_string(), span));
                     }
                     Type::Error
                 }
             }
 
-            Expr::Send { handle, message, span } => {
+            Expr::Send {
+                handle,
+                message,
+                span,
+            } => {
                 let handle_ty = self.check_expr(handle);
                 let msg_ty = self.check_expr(message);
 
@@ -2234,11 +2290,13 @@ impl<'a> ModuleChecker<'a> {
                                 ));
                             }
                         } else {
-                            self.errors.push(CheckError::no_message_handler(agent_name, span));
+                            self.errors
+                                .push(CheckError::no_message_handler(agent_name, span));
                         }
                     }
                 } else if !handle_ty.is_error() {
-                    self.errors.push(CheckError::send_non_agent(handle_ty.to_string(), span));
+                    self.errors
+                        .push(CheckError::send_non_agent(handle_ty.to_string(), span));
                 }
 
                 Type::Unit
@@ -2248,7 +2306,8 @@ impl<'a> ModuleChecker<'a> {
                 let value_ty = self.check_expr(value);
 
                 if let Some(agent_name) = &self.current_agent {
-                    self.inferred_emit_types.insert(agent_name.clone(), value_ty.clone());
+                    self.inferred_emit_types
+                        .insert(agent_name.clone(), value_ty.clone());
                 }
 
                 Type::Unit
@@ -2265,11 +2324,13 @@ impl<'a> ModuleChecker<'a> {
                                     if agent.beliefs.contains_key(field) {
                                         self.used_beliefs.insert(field.to_string());
                                     } else {
-                                        self.errors.push(CheckError::undefined_belief(field, &ident.span));
+                                        self.errors
+                                            .push(CheckError::undefined_belief(field, &ident.span));
                                     }
                                 }
                             } else {
-                                self.errors.push(CheckError::self_outside_agent(&ident.span));
+                                self.errors
+                                    .push(CheckError::self_outside_agent(&ident.span));
                             }
                         } else {
                             self.lookup_var(&ident.name, &ident.span);
@@ -2279,7 +2340,11 @@ impl<'a> ModuleChecker<'a> {
                 Type::String
             }
 
-            Expr::Match { scrutinee, arms, span } => {
+            Expr::Match {
+                scrutinee,
+                arms,
+                span,
+            } => {
                 let scrutinee_ty = self.check_expr(scrutinee);
 
                 // Track covered patterns for exhaustiveness
@@ -2302,7 +2367,10 @@ impl<'a> ModuleChecker<'a> {
                         Pattern::Variant { variant, .. } => {
                             covered_variants.insert(variant.name.clone());
                         }
-                        Pattern::Literal { value: Literal::Bool(b), .. } => {
+                        Pattern::Literal {
+                            value: Literal::Bool(b),
+                            ..
+                        } => {
                             if *b {
                                 covered_bool_true = true;
                             } else {
@@ -2329,17 +2397,18 @@ impl<'a> ModuleChecker<'a> {
                         Type::Named(name) => {
                             // Check if it's an enum and all variants are covered
                             if let Some(enum_info) = self.lookup_enum(name) {
-                                enum_info.variants.iter().all(|v| covered_variants.contains(v))
+                                enum_info
+                                    .variants
+                                    .iter()
+                                    .all(|v| covered_variants.contains(v))
                             } else {
                                 // Not an enum - needs wildcard
                                 false
                             }
                         }
-                        Type::Bool => {
-                            covered_bool_true && covered_bool_false
-                        }
+                        Type::Bool => covered_bool_true && covered_bool_false,
                         Type::Error => true, // Don't report exhaustiveness errors on error types
-                        _ => false, // Other types need a wildcard to be exhaustive
+                        _ => false,          // Other types need a wildcard to be exhaustive
                     };
 
                     if !is_exhaustive {
@@ -2353,7 +2422,8 @@ impl<'a> ModuleChecker<'a> {
             Expr::RecordConstruct { name, fields, span } => {
                 let record_info = self.lookup_record(&name.name);
                 let Some(record_info) = record_info else {
-                    self.errors.push(CheckError::undefined_type(&name.name, span));
+                    self.errors
+                        .push(CheckError::undefined_type(&name.name, span));
                     return Type::Error;
                 };
                 let record_info = record_info.clone();
@@ -2380,21 +2450,27 @@ impl<'a> ModuleChecker<'a> {
                             ));
                         }
                     } else {
-                        self.errors.push(CheckError::unknown_field(field_name, &field.span));
+                        self.errors
+                            .push(CheckError::unknown_field(field_name, &field.span));
                     }
                 }
 
                 // Check for missing fields
                 for (field_name, was_provided) in &provided {
                     if !was_provided {
-                        self.errors.push(CheckError::missing_field(field_name, &name.name, span));
+                        self.errors
+                            .push(CheckError::missing_field(field_name, &name.name, span));
                     }
                 }
 
                 Type::Named(name.name.clone())
             }
 
-            Expr::FieldAccess { object, field, span } => {
+            Expr::FieldAccess {
+                object,
+                field,
+                span,
+            } => {
                 let obj_ty = self.check_expr(object);
 
                 // Get the record name from the type
@@ -2415,7 +2491,8 @@ impl<'a> ModuleChecker<'a> {
                     if let Some(field_ty) = record_info.fields.get(&field.name) {
                         field_ty.clone()
                     } else {
-                        self.errors.push(CheckError::unknown_field(&field.name, span));
+                        self.errors
+                            .push(CheckError::unknown_field(&field.name, span));
                         Type::Error
                     }
                 } else {
@@ -2450,7 +2527,13 @@ impl<'a> ModuleChecker<'a> {
         }
     }
 
-    fn check_binary_op(&mut self, op: BinOp, left: &Type, right: &Type, span: &sage_types::Span) -> Type {
+    fn check_binary_op(
+        &mut self,
+        op: BinOp,
+        left: &Type,
+        right: &Type,
+        span: &sage_types::Span,
+    ) -> Type {
         if left.is_error() || right.is_error() {
             return Type::Error;
         }
@@ -2464,7 +2547,10 @@ impl<'a> ModuleChecker<'a> {
                     left.clone()
                 } else {
                     self.errors.push(CheckError::invalid_binary_op(
-                        format!("{op}"), left.to_string(), right.to_string(), span,
+                        format!("{op}"),
+                        left.to_string(),
+                        right.to_string(),
+                        span,
                     ));
                     Type::Error
                 }
@@ -2475,7 +2561,10 @@ impl<'a> ModuleChecker<'a> {
                     Type::String
                 } else {
                     self.errors.push(CheckError::invalid_binary_op(
-                        "++", left.to_string(), right.to_string(), span,
+                        "++",
+                        left.to_string(),
+                        right.to_string(),
+                        span,
                     ));
                     Type::Error
                 }
@@ -2486,7 +2575,10 @@ impl<'a> ModuleChecker<'a> {
                     Type::Bool
                 } else {
                     self.errors.push(CheckError::invalid_binary_op(
-                        format!("{op}"), left.to_string(), right.to_string(), span,
+                        format!("{op}"),
+                        left.to_string(),
+                        right.to_string(),
+                        span,
                     ));
                     Type::Error
                 }
@@ -2497,7 +2589,10 @@ impl<'a> ModuleChecker<'a> {
                     Type::Bool
                 } else {
                     self.errors.push(CheckError::invalid_binary_op(
-                        format!("{op}"), left.to_string(), right.to_string(), span,
+                        format!("{op}"),
+                        left.to_string(),
+                        right.to_string(),
+                        span,
                     ));
                     Type::Error
                 }
@@ -2508,7 +2603,10 @@ impl<'a> ModuleChecker<'a> {
                     Type::Bool
                 } else {
                     self.errors.push(CheckError::invalid_binary_op(
-                        format!("{op}"), left.to_string(), right.to_string(), span,
+                        format!("{op}"),
+                        left.to_string(),
+                        right.to_string(),
+                        span,
                     ));
                     Type::Error
                 }
@@ -2528,7 +2626,8 @@ impl<'a> ModuleChecker<'a> {
                 if operand.is_numeric() {
                     operand.clone()
                 } else {
-                    self.errors.push(CheckError::invalid_unary_op("-", operand.to_string(), span));
+                    self.errors
+                        .push(CheckError::invalid_unary_op("-", operand.to_string(), span));
                     Type::Error
                 }
             }
@@ -2536,7 +2635,8 @@ impl<'a> ModuleChecker<'a> {
                 if matches!(operand, Type::Bool) {
                     Type::Bool
                 } else {
-                    self.errors.push(CheckError::invalid_unary_op("!", operand.to_string(), span));
+                    self.errors
+                        .push(CheckError::invalid_unary_op("!", operand.to_string(), span));
                     Type::Error
                 }
             }
@@ -2552,7 +2652,11 @@ impl<'a> ModuleChecker<'a> {
                 // Binding pattern introduces a variable with the scrutinee's type
                 self.define_var(&name.name, scrutinee_ty.clone());
             }
-            Pattern::Variant { enum_name, variant, span } => {
+            Pattern::Variant {
+                enum_name,
+                variant,
+                span,
+            } => {
                 // Check that the scrutinee is the correct enum type
                 let expected_enum = match scrutinee_ty {
                     Type::Named(name) => Some(name.clone()),
@@ -2583,7 +2687,8 @@ impl<'a> ModuleChecker<'a> {
                             ));
                         }
                     } else {
-                        self.errors.push(CheckError::undefined_type(&enum_name_str.name, span));
+                        self.errors
+                            .push(CheckError::undefined_type(&enum_name_str.name, span));
                     }
                 } else {
                     // Unqualified variant: just `Active`
@@ -2654,10 +2759,18 @@ impl<'a> ModuleChecker<'a> {
         Type::Error
     }
 
-    fn check_function_call(&mut self, func: &FunctionInfo, args: &[Expr], span: &sage_types::Span) -> Type {
+    fn check_function_call(
+        &mut self,
+        func: &FunctionInfo,
+        args: &[Expr],
+        span: &sage_types::Span,
+    ) -> Type {
         if args.len() != func.params.len() {
             self.errors.push(CheckError::wrong_arg_count(
-                &func.name, func.params.len(), args.len(), span,
+                &func.name,
+                func.params.len(),
+                args.len(),
+                span,
             ));
             return Type::Error;
         }
@@ -2666,7 +2779,9 @@ impl<'a> ModuleChecker<'a> {
             let arg_ty = self.check_expr(arg);
             if !arg_ty.is_compatible_with(param_ty) {
                 self.errors.push(CheckError::type_mismatch(
-                    param_ty.to_string(), arg_ty.to_string(), arg.span(),
+                    param_ty.to_string(),
+                    arg_ty.to_string(),
+                    arg.span(),
                 ));
             }
         }
@@ -2674,23 +2789,34 @@ impl<'a> ModuleChecker<'a> {
         func.return_type.clone()
     }
 
-    fn check_builtin_call(&mut self, builtin: &crate::scope::BuiltinInfo, args: &[Expr], span: &sage_types::Span) -> Type {
+    fn check_builtin_call(
+        &mut self,
+        builtin: &crate::scope::BuiltinInfo,
+        args: &[Expr],
+        span: &sage_types::Span,
+    ) -> Type {
         match builtin.name {
             "len" => {
                 if args.len() != 1 {
-                    self.errors.push(CheckError::wrong_arg_count("len", 1, args.len(), span));
+                    self.errors
+                        .push(CheckError::wrong_arg_count("len", 1, args.len(), span));
                     return Type::Error;
                 }
                 let arg_ty = self.check_expr(&args[0]);
                 if arg_ty.list_element().is_none() && !arg_ty.is_error() {
-                    self.errors.push(CheckError::type_mismatch("List<T>", arg_ty.to_string(), args[0].span()));
+                    self.errors.push(CheckError::type_mismatch(
+                        "List<T>",
+                        arg_ty.to_string(),
+                        args[0].span(),
+                    ));
                 }
                 Type::Int
             }
 
             "push" => {
                 if args.len() != 2 {
-                    self.errors.push(CheckError::wrong_arg_count("push", 2, args.len(), span));
+                    self.errors
+                        .push(CheckError::wrong_arg_count("push", 2, args.len(), span));
                     return Type::Error;
                 }
                 let list_ty = self.check_expr(&args[0]);
@@ -2699,13 +2825,19 @@ impl<'a> ModuleChecker<'a> {
                 if let Some(expected_elem) = list_ty.list_element() {
                     if !elem_ty.is_compatible_with(expected_elem) {
                         self.errors.push(CheckError::type_mismatch(
-                            expected_elem.to_string(), elem_ty.to_string(), args[1].span(),
+                            expected_elem.to_string(),
+                            elem_ty.to_string(),
+                            args[1].span(),
                         ));
                     }
                     list_ty.clone()
                 } else {
                     if !list_ty.is_error() {
-                        self.errors.push(CheckError::type_mismatch("List<T>", list_ty.to_string(), args[0].span()));
+                        self.errors.push(CheckError::type_mismatch(
+                            "List<T>",
+                            list_ty.to_string(),
+                            args[0].span(),
+                        ));
                     }
                     Type::Error
                 }
@@ -2713,7 +2845,8 @@ impl<'a> ModuleChecker<'a> {
 
             "str" => {
                 if args.len() != 1 {
-                    self.errors.push(CheckError::wrong_arg_count("str", 1, args.len(), span));
+                    self.errors
+                        .push(CheckError::wrong_arg_count("str", 1, args.len(), span));
                     return Type::Error;
                 }
                 self.check_expr(&args[0]);
@@ -2724,7 +2857,10 @@ impl<'a> ModuleChecker<'a> {
                 if let Some(ref params) = builtin.params {
                     if args.len() != params.len() {
                         self.errors.push(CheckError::wrong_arg_count(
-                            builtin.name, params.len(), args.len(), span,
+                            builtin.name,
+                            params.len(),
+                            args.len(),
+                            span,
                         ));
                         return Type::Error;
                     }
@@ -2733,7 +2869,9 @@ impl<'a> ModuleChecker<'a> {
                         let arg_ty = self.check_expr(arg);
                         if !arg_ty.is_compatible_with(param_ty) {
                             self.errors.push(CheckError::type_mismatch(
-                                param_ty.to_string(), arg_ty.to_string(), arg.span(),
+                                param_ty.to_string(),
+                                arg_ty.to_string(),
+                                arg.span(),
                             ));
                         }
                     }
@@ -2755,7 +2893,11 @@ impl<'a> ModuleChecker<'a> {
         }
 
         // Check local agents
-        self.symbols.iter_agents().map(|(_, agent)| agent).find(|&agent| agent.module_path == self.module_path && agent.name == name).map(|v| v as _)
+        self.symbols
+            .iter_agents()
+            .map(|(_, agent)| agent)
+            .find(|&agent| agent.module_path == self.module_path && agent.name == name)
+            .map(|v| v as _)
     }
 
     fn lookup_record(&self, name: &str) -> Option<&RecordInfo> {
@@ -2769,7 +2911,11 @@ impl<'a> ModuleChecker<'a> {
         }
 
         // Check local records
-        self.symbols.iter_records().map(|(_, record)| record).find(|&record| record.module_path == self.module_path && record.name == name).map(|v| v as _)
+        self.symbols
+            .iter_records()
+            .map(|(_, record)| record)
+            .find(|&record| record.module_path == self.module_path && record.name == name)
+            .map(|v| v as _)
     }
 
     fn lookup_enum(&self, name: &str) -> Option<&EnumInfo> {
@@ -2783,7 +2929,11 @@ impl<'a> ModuleChecker<'a> {
         }
 
         // Check local enums
-        self.symbols.iter_enums().map(|(_, enum_info)| enum_info).find(|&enum_info| enum_info.module_path == self.module_path && enum_info.name == name).map(|v| v as _)
+        self.symbols
+            .iter_enums()
+            .map(|(_, enum_info)| enum_info)
+            .find(|&enum_info| enum_info.module_path == self.module_path && enum_info.name == name)
+            .map(|v| v as _)
     }
 
     fn push_scope(&mut self) {
@@ -2827,7 +2977,12 @@ impl<'a> ModuleChecker<'a> {
         }
 
         // Check local consts
-        self.symbols.iter_consts().map(|(_, const_info)| const_info).find(|&const_info| const_info.module_path == self.module_path && const_info.name == name).map(|v| v as _)
+        self.symbols
+            .iter_consts()
+            .map(|(_, const_info)| const_info)
+            .find(|&const_info| {
+                const_info.module_path == self.module_path && const_info.name == name
+            })
+            .map(|v| v as _)
     }
 }
-

@@ -189,12 +189,16 @@ fn check_file(path: &PathBuf) -> Result<()> {
 fn get_display_name(path: &Path) -> String {
     if path.is_dir() {
         // Project directory
-        path.file_name()
-            .map_or_else(|| "project".to_string(), |s| s.to_string_lossy().into_owned())
+        path.file_name().map_or_else(
+            || "project".to_string(),
+            |s| s.to_string_lossy().into_owned(),
+        )
     } else {
         // Single file
-        path.file_name()
-            .map_or_else(|| "unknown".to_string(), |s| s.to_string_lossy().into_owned())
+        path.file_name().map_or_else(
+            || "unknown".to_string(),
+            |s| s.to_string_lossy().into_owned(),
+        )
     }
 }
 
@@ -261,11 +265,16 @@ fn compile_with_toolchain(
     cmd.env("LD_LIBRARY_PATH", &lib_dir);
 
     cmd.arg(main_rs)
-        .arg("--edition").arg("2021")
-        .arg("--crate-type").arg("bin")
-        .arg("-L").arg(format!("dependency={}", libs_dir.display()))
-        .arg("-L").arg(&libs_dir)
-        .arg("-o").arg(output);
+        .arg("--edition")
+        .arg("2021")
+        .arg("--crate-type")
+        .arg("bin")
+        .arg("-L")
+        .arg(format!("dependency={}", libs_dir.display()))
+        .arg("-L")
+        .arg(&libs_dir)
+        .arg("-o")
+        .arg(output);
 
     // Pre-compiled libs are always release, so always use -O
     // Note: LTO is not used because pre-compiled libs don't have bitcode
@@ -281,7 +290,8 @@ fn compile_with_toolchain(
             if ext == "rlib" || ext == "dylib" || ext == "so" {
                 if let Some(name) = parse_lib_name(&path) {
                     if seen_crates.insert(name.clone()) {
-                        cmd.arg("--extern").arg(format!("{}={}", name, path.display()));
+                        cmd.arg("--extern")
+                            .arg(format!("{}={}", name, path.display()));
                     }
                 }
             }
@@ -310,10 +320,7 @@ fn parse_lib_name(path: &PathBuf) -> Option<String> {
 }
 
 /// Compile using cargo (slow path, requires Rust installed).
-fn compile_with_cargo(
-    project_dir: &PathBuf,
-    release: bool,
-) -> Result<()> {
+fn compile_with_cargo(project_dir: &PathBuf, release: bool) -> Result<()> {
     let mut cargo_args = vec!["build", "--quiet"];
     if release {
         cargo_args.push("--release");
@@ -353,21 +360,23 @@ fn build_file(
     let project_name = if path.is_dir() {
         // Project directory name
         path.file_name()
-            .map_or_else(|| "sage_program".to_string(), |s| s.to_string_lossy().into_owned())
+            .map_or_else(
+                || "sage_program".to_string(),
+                |s| s.to_string_lossy().into_owned(),
+            )
             .replace('-', "_")
     } else {
         // Single file name (without extension)
         path.file_stem()
-            .map_or_else(|| "sage_program".to_string(), |s| s.to_string_lossy().into_owned())
+            .map_or_else(
+                || "sage_program".to_string(),
+                |s| s.to_string_lossy().into_owned(),
+            )
             .replace('-', "_")
     };
 
     if !quiet {
-        println!(
-            "{}Compiling {}",
-            GEAR,
-            style(&display_name).yellow().bold()
-        );
+        println!("{}Compiling {}", GEAR, style(&display_name).yellow().bold());
         println!();
     }
 
@@ -451,7 +460,10 @@ fn build_file(
         std::fs::create_dir_all(&src_dir).into_diagnostic()?;
         let main_rs = src_dir.join("main.rs");
         let binary_dir = if release { "release" } else { "debug" };
-        let binary = project_dir.join("target").join(binary_dir).join(&project_name);
+        let binary = project_dir
+            .join("target")
+            .join(binary_dir)
+            .join(&project_name);
         (main_rs, binary)
     };
 

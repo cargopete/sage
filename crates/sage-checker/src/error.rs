@@ -188,10 +188,7 @@ pub enum CheckError {
     },
 
     #[error("item `{name}` in module `{module}` is private")]
-    #[diagnostic(
-        code(sage::private_item),
-        help("add `pub` to make it public")
-    )]
+    #[diagnostic(code(sage::private_item), help("add `pub` to make it public"))]
     PrivateItem {
         name: String,
         module: String,
@@ -550,11 +547,7 @@ impl CheckError {
     }
 
     /// Create a missing field error.
-    pub fn missing_field(
-        field: impl Into<String>,
-        record: impl Into<String>,
-        span: &Span,
-    ) -> Self {
+    pub fn missing_field(field: impl Into<String>, record: impl Into<String>, span: &Span) -> Self {
         Self::MissingField {
             field: field.into(),
             record: record.into(),

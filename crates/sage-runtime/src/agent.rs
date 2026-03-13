@@ -125,7 +125,10 @@ impl<T> AgentContext<T> {
     /// Receive a message with a timeout.
     ///
     /// Returns `None` if the timeout expires before a message arrives.
-    pub async fn receive_timeout<M>(&mut self, timeout: std::time::Duration) -> SageResult<Option<M>>
+    pub async fn receive_timeout<M>(
+        &mut self,
+        timeout: std::time::Duration,
+    ) -> SageResult<Option<M>>
     where
         M: serde::de::DeserializeOwned,
     {

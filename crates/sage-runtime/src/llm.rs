@@ -376,8 +376,7 @@ mod tests {
     #[tokio::test]
     async fn infer_structured_fails_on_mock() {
         let client = LlmClient::mock();
-        let result: Result<serde_json::Value, _> =
-            client.infer_structured("test", "{}").await;
+        let result: Result<serde_json::Value, _> = client.infer_structured("test", "{}").await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Mock client"));
     }

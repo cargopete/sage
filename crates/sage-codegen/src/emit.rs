@@ -116,10 +116,7 @@ mod tests {
         e.writeln("}");
 
         let output = e.finish();
-        assert_eq!(
-            output,
-            "fn main() {\n    println!(\"hello\");\n}\n"
-        );
+        assert_eq!(output, "fn main() {\n    println!(\"hello\");\n}\n");
     }
 
     #[test]

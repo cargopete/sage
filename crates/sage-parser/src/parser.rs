@@ -179,12 +179,11 @@ fn use_parser(source: Arc<str>) -> impl Parser<Token, TopLevel, Error = ParseErr
         });
 
     // Group import item: `Name` or `Name as Alias`
-    let group_item = ident_token_parser(src2.clone())
-        .then(
-            just(Token::KwAs)
-                .ignore_then(ident_token_parser(src2.clone()))
-                .or_not(),
-        );
+    let group_item = ident_token_parser(src2.clone()).then(
+        just(Token::KwAs)
+            .ignore_then(ident_token_parser(src2.clone()))
+            .or_not(),
+    );
 
     // Group use: `use a::b::{C, D as E}`
     let group_use = just(Token::KwPub)
@@ -2413,7 +2412,11 @@ mod tests {
         let prog = prog.expect("should parse");
 
         // Find Worker agent
-        let worker = prog.agents.iter().find(|a| a.name.name == "Worker").unwrap();
+        let worker = prog
+            .agents
+            .iter()
+            .find(|a| a.name.name == "Worker")
+            .unwrap();
         let handler = &worker.handlers[0];
         let stmt = &handler.body.stmts[0];
 
@@ -2465,7 +2468,11 @@ mod tests {
         assert_eq!(prog.agents.len(), 2);
 
         // Check Worker has receives
-        let worker = prog.agents.iter().find(|a| a.name.name == "Worker").unwrap();
+        let worker = prog
+            .agents
+            .iter()
+            .find(|a| a.name.name == "Worker")
+            .unwrap();
         assert!(worker.receives.is_some());
     }
 }
