@@ -29,10 +29,14 @@ agent Researcher {
     topic: String
 
     on start {
-        let summary: Inferred<String> = infer(
+        let summary = try infer(
             "Write a concise 2-sentence summary of: {self.topic}"
         );
         emit(summary);
+    }
+
+    on error(e) {
+        emit("Research unavailable");
     }
 }
 
@@ -41,12 +45,17 @@ agent Coordinator {
         let r1 = spawn Researcher { topic: "quantum computing" };
         let r2 = spawn Researcher { topic: "CRISPR gene editing" };
 
-        let s1 = await r1;
-        let s2 = await r2;
+        let s1 = try await r1;
+        let s2 = try await r2;
 
         print(s1);
         print(s2);
         emit(0);
+    }
+
+    on error(e) {
+        print("A researcher failed");
+        emit(1);
     }
 }
 
@@ -86,8 +95,12 @@ agent Worker {
 agent Main {
     on start {
         let w = spawn Worker { value: 10, multiplier: 2 };
-        let result = await w;
+        let result = try await w;
         emit(result);
+    }
+
+    on error(e) {
+        emit(0);
     }
 }
 
@@ -166,9 +179,13 @@ use agents::Worker;
 agent Main {
     on start {
         let w = spawn Worker { task: "Processing" };
-        let result = await w;
+        let result = try await w;
         print(result);
         emit(0);
+    }
+
+    on error(e) {
+        emit(1);
     }
 }
 run Main;
@@ -245,10 +262,14 @@ agent Worker receives WorkerMsg {
 agent Coordinator {
     on start {
         let w = spawn Worker { id: 1 };
-        send(w, Task);
-        send(w, Shutdown);
-        await w;
+        try send(w, Task);
+        try send(w, Shutdown);
+        try await w;
         emit(0);
+    }
+
+    on error(e) {
+        emit(1);
     }
 }
 
@@ -337,6 +358,45 @@ fn unwrap_result(r: Result) -> String {
         Ok(value) => str(value),
         Err(msg) => msg,
     };
+}
+```
+
+### Error Handling
+
+Fallible operations (`infer`, `await`, `send`, and functions marked `fails`) must be explicitly handled:
+
+```sage
+agent Main {
+    on start {
+        // try propagates errors to the agent's on error handler
+        let result = try infer("What is 2+2?");
+        print(result);
+        emit(0);
+    }
+
+    on error(e) {
+        print("Something went wrong");
+        emit(1);
+    }
+}
+
+run Main;
+```
+
+You can also use `catch` to handle errors inline:
+
+```sage
+let result = catch infer("prompt") {
+    "fallback value"
+};
+```
+
+Functions can be marked as fallible:
+
+```sage
+fn risky_operation() -> Int fails {
+    let value = try infer("Give me a number");
+    return parse_int(value);
 }
 ```
 
@@ -461,6 +521,14 @@ cargo build --release
 ```
 
 ## Usage
+
+Create a new project:
+
+```bash
+sage new my_project
+cd my_project
+sage run .
+```
 
 Run a Sage program:
 
