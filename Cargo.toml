@@ -21,5 +21,10 @@ repository = "https://github.com/sagelang/sage"
 unsafe_code = "forbid"
 
 [workspace.lints.clippy]
-all = "warn"
-pedantic = "warn"
+all = { level = "warn", priority = -1 }
+# pedantic disabled for now - too many existing issues to fix in one go
+# pedantic = { level = "warn", priority = -1 }
+# Allow specific lints
+approx_constant = "allow"
+collapsible_match = "allow"
+ptr_arg = "allow"

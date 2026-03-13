@@ -1233,7 +1233,7 @@ fn pattern_parser(source: Arc<str>) -> impl Parser<Token, Pattern, Error = Parse
         move |name, span: Range<usize>| {
             // If it looks like a variant (starts with uppercase), treat as variant
             // Otherwise treat as binding
-            if name.name.chars().next().map_or(false, |c| c.is_uppercase()) {
+            if name.name.chars().next().is_some_and(|c| c.is_uppercase()) {
                 Pattern::Variant {
                     enum_name: None,
                     variant: name,

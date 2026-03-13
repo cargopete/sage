@@ -104,7 +104,7 @@ pub fn load_project(project_path: &Path) -> Result<ModuleTree, Vec<LoadError>> {
 
     if !manifest_path.exists() {
         // No manifest - treat as single file if it's a .sg
-        if project_path.extension().map_or(false, |e| e == "sg") {
+        if project_path.extension().is_some_and(|e| e == "sg") {
             return load_single_file(project_path);
         }
         return Err(vec![LoadError::NoManifest {
