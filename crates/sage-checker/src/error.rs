@@ -177,6 +177,38 @@ pub enum CheckError {
     },
 
     // =========================================================================
+    // Module errors
+    // =========================================================================
+    #[error("module `{path}` not found")]
+    #[diagnostic(code(sage::module_not_found))]
+    ModuleNotFound {
+        path: String,
+        #[label("no module at this path")]
+        span: SourceSpan,
+    },
+
+    #[error("item `{name}` in module `{module}` is private")]
+    #[diagnostic(
+        code(sage::private_item),
+        help("add `pub` to make it public")
+    )]
+    PrivateItem {
+        name: String,
+        module: String,
+        #[label("cannot access private item")]
+        span: SourceSpan,
+    },
+
+    #[error("item `{name}` not found in module `{module}`")]
+    #[diagnostic(code(sage::item_not_found))]
+    ItemNotFound {
+        name: String,
+        module: String,
+        #[label("no such item")]
+        span: SourceSpan,
+    },
+
+    // =========================================================================
     // Warnings
     // =========================================================================
     #[error("unused belief `{name}`")]
@@ -395,6 +427,32 @@ impl CheckError {
     pub fn unused_belief(name: impl Into<String>, span: &Span) -> Self {
         Self::UnusedBelief {
             name: name.into(),
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create a module-not-found error.
+    pub fn module_not_found(path: impl Into<String>, span: &Span) -> Self {
+        Self::ModuleNotFound {
+            path: path.into(),
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create a private-item error.
+    pub fn private_item(name: impl Into<String>, module: impl Into<String>, span: &Span) -> Self {
+        Self::PrivateItem {
+            name: name.into(),
+            module: module.into(),
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create an item-not-found error.
+    pub fn item_not_found(name: impl Into<String>, module: impl Into<String>, span: &Span) -> Self {
+        Self::ItemNotFound {
+            name: name.into(),
+            module: module.into(),
             span: to_source_span(span),
         }
     }

@@ -18,4 +18,4 @@
 mod emit;
 mod generator;
 
-pub use generator::{generate, GeneratedProject};
+pub use generator::{generate, generate_module_tree, GeneratedProject};

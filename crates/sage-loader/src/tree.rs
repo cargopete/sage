@@ -134,6 +134,7 @@ pub fn load_project(project_path: &Path) -> Result<ModuleTree, Vec<LoadError>> {
 
 /// Internal loader that tracks state during recursive loading.
 struct ModuleLoader {
+    #[allow(dead_code)]
     project_root: PathBuf,
     modules: HashMap<ModulePath, ParsedModule>,
     loading: HashSet<PathBuf>, // Currently loading (for cycle detection)

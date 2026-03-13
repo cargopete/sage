@@ -4,13 +4,11 @@ use clap::{Parser, Subcommand};
 use console::{style, Emoji};
 use indicatif::{ProgressBar, ProgressStyle};
 use miette::{Diagnostic, IntoDiagnostic, Result, Severity, WrapErr};
-use sage_checker::check;
-use sage_codegen::generate;
-use sage_lexer::lex;
-use sage_parser::parse;
-use std::path::PathBuf;
+use sage_checker::check_module_tree;
+use sage_codegen::generate_module_tree;
+use sage_loader::{load_project, ModuleTree};
+use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::Arc;
 use std::time::Instant;
 
 // Emojis for different stages
@@ -144,53 +142,37 @@ fn run_file(path: &PathBuf, release: bool, quiet: bool) -> Result<()> {
     Ok(())
 }
 
-/// Check a Sage program file without running it.
+/// Check a Sage program file or project without running it.
 fn check_file(path: &PathBuf) -> Result<()> {
-    let source = std::fs::read_to_string(path)
-        .into_diagnostic()
-        .wrap_err_with(|| format!("Failed to read file: {}", path.display()))?;
+    let display_name = get_display_name(path);
 
-    let filename = path
-        .file_name()
-        .map_or_else(|| "unknown".to_string(), |s| s.to_string_lossy().into_owned());
-
-    // Lex
-    let lex_result = match lex(&source) {
-        Ok(result) => result,
-        Err(err) => {
-            let report = miette::Report::new(err).with_source_code(source);
-            return Err(report);
+    // Load the project/file
+    let module_tree = match load_project(path) {
+        Ok(tree) => tree,
+        Err(errors) => {
+            for err in errors {
+                eprintln!("Load error: {err}");
+            }
+            miette::bail!("Failed to load {}", display_name);
         }
     };
 
-    // Parse
-    let source_arc: Arc<str> = Arc::from(source.as_str());
-    let (program, parse_errors) = parse(lex_result.tokens(), Arc::clone(&source_arc));
-
+    // Check the module tree
+    let check_result = check_module_tree(&module_tree);
     let mut has_errors = false;
 
-    if !parse_errors.is_empty() {
-        for err in &parse_errors {
-            eprintln!("Parse error: {err}");
-        }
-        has_errors = true;
-    }
-
-    if let Some(program) = program {
-        // Type check
-        let check_result = check(&program);
-        for err in &check_result.errors {
-            let report = miette::Report::new(err.clone()).with_source_code(source.clone());
-            eprintln!("{report:?}");
-            // Only count actual errors, not warnings
-            if err.severity().unwrap_or(Severity::Error) == Severity::Error {
-                has_errors = true;
-            }
+    for err in &check_result.errors {
+        // Try to find the source for this error
+        let source_code = get_source_for_error(&module_tree, err);
+        let report = miette::Report::new(err.clone()).with_source_code(source_code);
+        eprintln!("{report:?}");
+        if err.severity().unwrap_or(Severity::Error) == Severity::Error {
+            has_errors = true;
         }
     }
 
     if has_errors {
-        miette::bail!("Errors found in {filename}");
+        miette::bail!("Errors found in {}", display_name);
     }
 
     println!(
@@ -198,9 +180,31 @@ fn check_file(path: &PathBuf) -> Result<()> {
         SPARKLES,
         style("No errors").green().bold(),
         style("in").dim(),
-        style(&filename).yellow()
+        style(&display_name).yellow()
     );
     Ok(())
+}
+
+/// Get a display-friendly name for a path.
+fn get_display_name(path: &Path) -> String {
+    if path.is_dir() {
+        // Project directory
+        path.file_name()
+            .map_or_else(|| "project".to_string(), |s| s.to_string_lossy().into_owned())
+    } else {
+        // Single file
+        path.file_name()
+            .map_or_else(|| "unknown".to_string(), |s| s.to_string_lossy().into_owned())
+    }
+}
+
+/// Get source code for an error (used for error reporting).
+fn get_source_for_error(tree: &ModuleTree, _err: &sage_checker::CheckError) -> String {
+    // For now, return the root module's source. A more sophisticated implementation
+    // would track which module the error came from.
+    tree.modules
+        .get(&tree.root)
+        .map_or_else(String::new, |m| (*m.source).to_string())
 }
 
 /// Find the Sage toolchain directory.
@@ -329,7 +333,7 @@ fn compile_with_cargo(
     Ok(())
 }
 
-/// Build a Sage program to a native binary.
+/// Build a Sage program or project to a native binary.
 /// Returns the path to the binary if compilation succeeded.
 fn build_file(
     path: &PathBuf,
@@ -344,24 +348,25 @@ fn build_file(
         print_banner();
     }
 
-    let source = std::fs::read_to_string(path)
-        .into_diagnostic()
-        .wrap_err_with(|| format!("Failed to read file: {}", path.display()))?;
+    let display_name = get_display_name(path);
 
-    let filename = path
-        .file_name()
-        .map_or_else(|| "unknown".to_string(), |s| s.to_string_lossy().into_owned());
-
-    let project_name = path
-        .file_stem()
-        .map_or_else(|| "sage_program".to_string(), |s| s.to_string_lossy().into_owned())
-        .replace('-', "_");
+    let project_name = if path.is_dir() {
+        // Project directory name
+        path.file_name()
+            .map_or_else(|| "sage_program".to_string(), |s| s.to_string_lossy().into_owned())
+            .replace('-', "_")
+    } else {
+        // Single file name (without extension)
+        path.file_stem()
+            .map_or_else(|| "sage_program".to_string(), |s| s.to_string_lossy().into_owned())
+            .replace('-', "_")
+    };
 
     if !quiet {
         println!(
             "{}Compiling {}",
             GEAR,
-            style(&filename).yellow().bold()
+            style(&display_name).yellow().bold()
         );
         println!();
     }
@@ -374,68 +379,56 @@ fn build_file(
                 .unwrap()
                 .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
         );
-        sp.set_message("Parsing...");
+        sp.set_message("Loading...");
         sp.enable_steady_tick(std::time::Duration::from_millis(80));
         Some(sp)
     } else {
         None
     };
 
-    // Lex
-    let lex_result = match lex(&source) {
-        Ok(result) => result,
-        Err(err) => {
+    // Load the project/file
+    let module_tree = match load_project(path) {
+        Ok(tree) => tree,
+        Err(errors) => {
             if let Some(sp) = spinner {
                 sp.finish_and_clear();
             }
-            let report = miette::Report::new(err).with_source_code(source);
-            return Err(report);
+            for err in errors {
+                eprintln!("Load error: {err}");
+            }
+            miette::bail!("Failed to load {}", display_name);
         }
     };
-
-    // Parse
-    let source_arc: Arc<str> = Arc::from(source.as_str());
-    let (program, parse_errors) = parse(lex_result.tokens(), Arc::clone(&source_arc));
-
-    if !parse_errors.is_empty() {
-        if let Some(sp) = spinner {
-            sp.finish_and_clear();
-        }
-        for err in &parse_errors {
-            eprintln!("Parse error: {err}");
-        }
-        miette::bail!("Parse errors in {filename}");
-    }
-
-    let program = program.ok_or_else(|| miette::miette!("Failed to parse program"))?;
 
     if let Some(ref sp) = spinner {
         sp.set_message("Type checking...");
     }
 
-    // Type check
-    let check_result = check(&program);
+    // Type check the module tree
+    let check_result = check_module_tree(&module_tree);
     let mut has_errors = false;
+
     for err in &check_result.errors {
         if let Some(ref sp) = spinner {
             sp.finish_and_clear();
         }
-        let report = miette::Report::new(err.clone()).with_source_code(source.clone());
+        let source_code = get_source_for_error(&module_tree, err);
+        let report = miette::Report::new(err.clone()).with_source_code(source_code);
         eprintln!("{report:?}");
         if err.severity().unwrap_or(Severity::Error) == Severity::Error {
             has_errors = true;
         }
     }
     if has_errors {
-        miette::bail!("Type errors in {filename}");
+        miette::bail!("Type errors in {}", display_name);
     }
 
     if let Some(ref sp) = spinner {
         sp.set_message("Generating Rust...");
     }
 
-    // Generate Rust code
-    let generated = generate(&program, &project_name);
+    // Generate Rust code from module tree
+    let generated = generate_module_tree(&module_tree, &project_name);
 
     // Determine compilation mode
     let toolchain = find_toolchain();
@@ -520,7 +513,7 @@ fn build_file(
             "{}{} Compiled {}{} in {:.2}s",
             SPARKLES,
             style("Done").green().bold(),
-            style(&filename).yellow(),
+            style(&display_name).yellow(),
             style(mode).dim(),
             total_duration.as_secs_f64()
         );

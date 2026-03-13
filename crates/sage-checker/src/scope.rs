@@ -4,6 +4,9 @@ use crate::types::Type;
 use sage_types::TypeExpr;
 use std::collections::HashMap;
 
+/// A module path like `["agents", "researcher"]`.
+pub type ModulePath = Vec<String>;
+
 /// Information about a declared agent.
 #[derive(Debug, Clone)]
 pub struct AgentInfo {
@@ -17,6 +20,10 @@ pub struct AgentInfo {
     pub emit_type: Option<Type>,
     /// Whether this agent has an `on start` handler.
     pub has_start_handler: bool,
+    /// Whether this agent is public (visible outside its module).
+    pub is_pub: bool,
+    /// The module path where this agent is defined.
+    pub module_path: ModulePath,
 }
 
 /// Information about a declared function.
@@ -28,6 +35,10 @@ pub struct FunctionInfo {
     pub params: Vec<(String, Type)>,
     /// Return type.
     pub return_type: Type,
+    /// Whether this function is public (visible outside its module).
+    pub is_pub: bool,
+    /// The module path where this function is defined.
+    pub module_path: ModulePath,
 }
 
 /// Information about a built-in function.
@@ -225,6 +236,16 @@ impl SymbolTable {
     /// Get a mutable reference to an agent.
     pub fn get_agent_mut(&mut self, name: &str) -> Option<&mut AgentInfo> {
         self.agents.get_mut(name)
+    }
+
+    /// Iterate over all agents.
+    pub fn iter_agents(&self) -> impl Iterator<Item = (&String, &AgentInfo)> {
+        self.agents.iter()
+    }
+
+    /// Iterate over all functions.
+    pub fn iter_functions(&self) -> impl Iterator<Item = (&String, &FunctionInfo)> {
+        self.functions.iter()
     }
 }
 

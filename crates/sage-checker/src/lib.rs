@@ -41,7 +41,7 @@ mod error;
 mod scope;
 mod types;
 
-pub use checker::{check, CheckResult, Checker};
+pub use checker::{check, check_module_tree, CheckResult, Checker, ModuleCheckResult, ModulePath};
 pub use error::CheckError;
 pub use scope::{AgentInfo, FunctionInfo, Scope, SymbolTable};
 pub use types::Type;
@@ -528,5 +528,31 @@ mod tests {
             result.errors[0],
             CheckError::UndefinedVariable { .. }
         ));
+    }
+
+    #[test]
+    fn check_module_tree_simple() {
+        use sage_loader::load_single_file;
+        use std::fs;
+        use tempfile::TempDir;
+
+        let dir = TempDir::new().unwrap();
+        let file = dir.path().join("test.sg");
+        fs::write(
+            &file,
+            r#"
+agent Main {
+    on start {
+        emit(42);
+    }
+}
+run Main;
+"#,
+        )
+        .unwrap();
+
+        let tree = load_single_file(&file).unwrap();
+        let result = check_module_tree(&tree);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
     }
 }
