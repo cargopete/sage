@@ -26,7 +26,7 @@ Instead of wrestling with Python frameworks like LangChain or CrewAI, you write 
 
 ```sage
 agent Researcher {
-    belief topic: String
+    topic: String
 
     on start {
         let summary: Inferred<String> = infer(
@@ -68,14 +68,14 @@ See [docs/RFC-0001-poc.md](docs/RFC-0001-poc.md) for the language specification.
 
 ## Language Syntax
 
-### Agents & Beliefs
+### Agents & State
 
-Agents are the core abstraction — autonomous units with beliefs (state) and event handlers:
+Agents are the core abstraction — autonomous units with state and event handlers:
 
 ```sage
 agent Worker {
-    belief value: Int
-    belief multiplier: Int
+    value: Int
+    multiplier: Int
 
     on start {
         let result = self.value * self.multiplier;
@@ -127,7 +127,7 @@ entry = "src/main.sg"
 **src/agents.sg:**
 ```sage
 pub agent Worker {
-    belief task: String
+    task: String
 
     on start {
         emit(self.task ++ " completed");

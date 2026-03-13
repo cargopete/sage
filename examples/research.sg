@@ -1,7 +1,7 @@
 // Full research demo: parallel LLM-powered research agents
 // This is the canonical Sage example showing the language's key features:
 // - Agents as first-class primitives
-// - Beliefs as agent state
+// - Agent state (formerly "beliefs")
 // - spawn/await for concurrency
 // - infer for LLM integration
 //
@@ -9,7 +9,7 @@
 // (Requires SAGE_API_KEY environment variable, or use --mock for testing)
 
 agent Researcher {
-    belief topic: String
+    topic: String
 
     on start {
         let summary = infer(

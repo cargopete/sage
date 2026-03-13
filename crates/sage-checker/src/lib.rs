@@ -196,7 +196,7 @@ mod tests {
     fn check_spawn_with_beliefs() {
         let source = r#"
             agent Worker {
-                belief name: String
+                name: String
 
                 on start {
                     emit(self.name);
@@ -221,7 +221,7 @@ mod tests {
     fn check_missing_belief_init() {
         let source = r#"
             agent Worker {
-                belief name: String
+                name: String
 
                 on start {
                     emit(self.name);
@@ -249,7 +249,7 @@ mod tests {
     fn check_entry_agent_with_beliefs() {
         let source = r#"
             agent Main {
-                belief x: Int
+                x: Int
 
                 on start {
                     emit(self.x);
@@ -422,7 +422,7 @@ mod tests {
     fn check_unused_belief_warning() {
         let source = r#"
             agent Worker {
-                belief unused: Int
+                unused: Int
 
                 on start {
                     emit(42);
@@ -451,7 +451,7 @@ mod tests {
     fn check_used_belief_no_warning() {
         let source = r#"
             agent Worker {
-                belief value: Int
+                value: Int
 
                 on start {
                     emit(self.value * 2);
@@ -553,6 +553,409 @@ run Main;
 
         let tree = load_single_file(&file).unwrap();
         let result = check_module_tree(&tree);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+    }
+
+    #[test]
+    fn check_record_construction() {
+        let source = r#"
+            record Point {
+                x: Int,
+                y: Int,
+            }
+
+            agent Main {
+                on start {
+                    let p = Point { x: 10, y: 20 };
+                    emit(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+    }
+
+    #[test]
+    fn check_record_field_access() {
+        let source = r#"
+            record Point {
+                x: Int,
+                y: Int,
+            }
+
+            agent Main {
+                on start {
+                    let p = Point { x: 10, y: 20 };
+                    let sum = p.x + p.y;
+                    emit(sum);
+                }
+            }
+            run Main;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+    }
+
+    #[test]
+    fn check_record_missing_field() {
+        let source = r#"
+            record Point {
+                x: Int,
+                y: Int,
+            }
+
+            agent Main {
+                on start {
+                    let p = Point { x: 10 };
+                    emit(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(!result.errors.is_empty());
+        assert!(matches!(
+            result.errors[0],
+            CheckError::MissingField { .. }
+        ));
+    }
+
+    #[test]
+    fn check_record_unknown_field() {
+        let source = r#"
+            record Point {
+                x: Int,
+                y: Int,
+            }
+
+            agent Main {
+                on start {
+                    let p = Point { x: 10, y: 20, z: 30 };
+                    emit(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(!result.errors.is_empty());
+        assert!(matches!(
+            result.errors[0],
+            CheckError::UnknownField { .. }
+        ));
+    }
+
+    #[test]
+    fn check_undefined_record_type() {
+        let source = r#"
+            agent Main {
+                on start {
+                    let p = Unknown { x: 10 };
+                    emit(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(!result.errors.is_empty());
+        assert!(matches!(
+            result.errors[0],
+            CheckError::UndefinedType { .. }
+        ));
+    }
+
+    #[test]
+    fn check_field_access_on_non_record() {
+        let source = r#"
+            agent Main {
+                on start {
+                    let x = 42;
+                    let y = x.field;
+                    emit(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(!result.errors.is_empty());
+        assert!(matches!(
+            result.errors[0],
+            CheckError::FieldAccessOnNonRecord { .. }
+        ));
+    }
+
+    #[test]
+    fn check_record_field_type_mismatch() {
+        let source = r#"
+            record Point {
+                x: Int,
+                y: Int,
+            }
+
+            agent Main {
+                on start {
+                    let p = Point { x: "not an int", y: 20 };
+                    emit(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(!result.errors.is_empty());
+        assert!(matches!(
+            result.errors[0],
+            CheckError::TypeMismatch { .. }
+        ));
+    }
+
+    #[test]
+    fn check_match_exhaustive_enum() {
+        let source = r#"
+            enum Status {
+                Active,
+                Inactive,
+            }
+
+            fn check_status(s: Status) -> Int {
+                return match s {
+                    Active => 1,
+                    Inactive => 0,
+                };
+            }
+
+            agent Main {
+                on start {
+                    emit(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+    }
+
+    #[test]
+    fn check_match_non_exhaustive_enum() {
+        let source = r#"
+            enum Status {
+                Active,
+                Inactive,
+                Pending,
+            }
+
+            fn check_status(s: Status) -> Int {
+                return match s {
+                    Active => 1,
+                    Inactive => 0,
+                };
+            }
+
+            agent Main {
+                on start {
+                    emit(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(!result.errors.is_empty());
+        assert!(matches!(
+            result.errors[0],
+            CheckError::NonExhaustiveMatch { .. }
+        ));
+    }
+
+    #[test]
+    fn check_match_with_wildcard() {
+        let source = r#"
+            enum Status {
+                Active,
+                Inactive,
+                Pending,
+            }
+
+            fn check_status(s: Status) -> Int {
+                return match s {
+                    Active => 1,
+                    _ => 0,
+                };
+            }
+
+            agent Main {
+                on start {
+                    emit(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+    }
+
+    #[test]
+    fn check_match_bool_exhaustive() {
+        let source = r#"
+            fn bool_to_int(b: Bool) -> Int {
+                return match b {
+                    true => 1,
+                    false => 0,
+                };
+            }
+
+            agent Main {
+                on start {
+                    emit(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+    }
+
+    #[test]
+    fn check_match_bool_non_exhaustive() {
+        let source = r#"
+            fn bool_to_int(b: Bool) -> Int {
+                return match b {
+                    true => 1,
+                };
+            }
+
+            agent Main {
+                on start {
+                    emit(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(!result.errors.is_empty());
+        assert!(matches!(
+            result.errors[0],
+            CheckError::NonExhaustiveMatch { .. }
+        ));
+    }
+
+    #[test]
+    fn check_match_int_needs_wildcard() {
+        let source = r#"
+            fn check_int(n: Int) -> String {
+                return match n {
+                    1 => "one",
+                    2 => "two",
+                };
+            }
+
+            agent Main {
+                on start {
+                    emit(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(!result.errors.is_empty());
+        assert!(matches!(
+            result.errors[0],
+            CheckError::NonExhaustiveMatch { .. }
+        ));
+    }
+
+    #[test]
+    fn check_match_binding_pattern() {
+        let source = r#"
+            fn describe(n: Int) -> String {
+                return match n {
+                    1 => "one",
+                    x => "other",
+                };
+            }
+
+            agent Main {
+                on start {
+                    emit(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+    }
+
+    #[test]
+    fn check_const_declaration() {
+        let source = r#"
+            const MAX_SIZE: Int = 100;
+            const GREETING: String = "Hello";
+
+            agent Main {
+                on start {
+                    let x = MAX_SIZE;
+                    print(GREETING);
+                    emit(x);
+                }
+            }
+            run Main;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+    }
+
+    #[test]
+    fn check_const_type_mismatch() {
+        let source = r#"
+            const VALUE: Int = "not an int";
+
+            agent Main {
+                on start {
+                    emit(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(!result.errors.is_empty());
+        assert!(matches!(
+            result.errors[0],
+            CheckError::TypeMismatch { .. }
+        ));
+    }
+
+    #[test]
+    fn check_const_used_as_variable() {
+        let source = r#"
+            const PI: Float = 3.14;
+
+            fn area(r: Float) -> Float {
+                return PI * r * r;
+            }
+
+            agent Main {
+                on start {
+                    emit(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (_, result) = check_source(source);
         assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
     }
 }

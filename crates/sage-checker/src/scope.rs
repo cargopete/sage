@@ -52,6 +52,47 @@ pub struct BuiltinInfo {
     pub return_type: Type,
 }
 
+/// Information about a declared record type.
+#[derive(Debug, Clone)]
+pub struct RecordInfo {
+    /// The record's name.
+    pub name: String,
+    /// Fields declared by this record (name -> type).
+    pub fields: HashMap<String, Type>,
+    /// Field order (for positional access if needed).
+    pub field_order: Vec<String>,
+    /// Whether this record is public.
+    pub is_pub: bool,
+    /// The module path where this record is defined.
+    pub module_path: ModulePath,
+}
+
+/// Information about a declared enum type.
+#[derive(Debug, Clone)]
+pub struct EnumInfo {
+    /// The enum's name.
+    pub name: String,
+    /// Variant names.
+    pub variants: Vec<String>,
+    /// Whether this enum is public.
+    pub is_pub: bool,
+    /// The module path where this enum is defined.
+    pub module_path: ModulePath,
+}
+
+/// Information about a declared constant.
+#[derive(Debug, Clone)]
+pub struct ConstInfo {
+    /// The constant's name.
+    pub name: String,
+    /// The constant's type.
+    pub ty: Type,
+    /// Whether this constant is public.
+    pub is_pub: bool,
+    /// The module path where this constant is defined.
+    pub module_path: ModulePath,
+}
+
 /// A scope containing variable bindings.
 #[derive(Debug, Clone, Default)]
 pub struct Scope {
@@ -93,6 +134,12 @@ pub struct SymbolTable {
     functions: HashMap<String, FunctionInfo>,
     /// Built-in functions.
     builtins: HashMap<&'static str, BuiltinInfo>,
+    /// Declared record types.
+    records: HashMap<String, RecordInfo>,
+    /// Declared enum types.
+    enums: HashMap<String, EnumInfo>,
+    /// Declared constants.
+    consts: HashMap<String, ConstInfo>,
 }
 
 impl SymbolTable {
@@ -247,6 +294,72 @@ impl SymbolTable {
     pub fn iter_functions(&self) -> impl Iterator<Item = (&String, &FunctionInfo)> {
         self.functions.iter()
     }
+
+    /// Define a record type.
+    pub fn define_record(&mut self, info: RecordInfo) {
+        self.records.insert(info.name.clone(), info);
+    }
+
+    /// Define an enum type.
+    pub fn define_enum(&mut self, info: EnumInfo) {
+        self.enums.insert(info.name.clone(), info);
+    }
+
+    /// Define a constant.
+    pub fn define_const(&mut self, info: ConstInfo) {
+        self.consts.insert(info.name.clone(), info);
+    }
+
+    /// Look up a record by name.
+    #[must_use]
+    pub fn get_record(&self, name: &str) -> Option<&RecordInfo> {
+        self.records.get(name)
+    }
+
+    /// Look up an enum by name.
+    #[must_use]
+    pub fn get_enum(&self, name: &str) -> Option<&EnumInfo> {
+        self.enums.get(name)
+    }
+
+    /// Look up a constant by name.
+    #[must_use]
+    pub fn get_const(&self, name: &str) -> Option<&ConstInfo> {
+        self.consts.get(name)
+    }
+
+    /// Check if a record is defined.
+    #[must_use]
+    pub fn has_record(&self, name: &str) -> bool {
+        self.records.contains_key(name)
+    }
+
+    /// Check if an enum is defined.
+    #[must_use]
+    pub fn has_enum(&self, name: &str) -> bool {
+        self.enums.contains_key(name)
+    }
+
+    /// Check if a constant is defined.
+    #[must_use]
+    pub fn has_const(&self, name: &str) -> bool {
+        self.consts.contains_key(name)
+    }
+
+    /// Iterate over all records.
+    pub fn iter_records(&self) -> impl Iterator<Item = (&String, &RecordInfo)> {
+        self.records.iter()
+    }
+
+    /// Iterate over all enums.
+    pub fn iter_enums(&self) -> impl Iterator<Item = (&String, &EnumInfo)> {
+        self.enums.iter()
+    }
+
+    /// Iterate over all constants.
+    pub fn iter_consts(&self) -> impl Iterator<Item = (&String, &ConstInfo)> {
+        self.consts.iter()
+    }
 }
 
 /// Convert a syntactic `TypeExpr` to a semantic Type.
@@ -263,8 +376,9 @@ pub fn resolve_type(ty: &TypeExpr) -> Type {
         TypeExpr::Inferred(inner) => Type::Inferred(Box::new(resolve_type(inner))),
         TypeExpr::Agent(ident) => Type::Agent(ident.name.clone()),
         TypeExpr::Named(ident) => {
-            // In POC, named types are just agent references
-            Type::Agent(ident.name.clone())
+            // Named types can be records, enums, or agents
+            // We return Type::Named and let the checker validate
+            Type::Named(ident.name.clone())
         }
     }
 }

@@ -3,9 +3,9 @@
 //! This module transforms a token stream into an AST.
 
 use crate::ast::{
-    AgentDecl, BeliefDecl, BinOp, Block, ElseBranch, EventKind, Expr, FieldInit, FnDecl,
-    HandlerDecl, Literal, ModDecl, Param, Program, Stmt, StringPart, StringTemplate, UnaryOp,
-    UseDecl, UseKind,
+    AgentDecl, BeliefDecl, BinOp, Block, ConstDecl, ElseBranch, EnumDecl, EventKind, Expr,
+    FieldInit, FnDecl, HandlerDecl, Literal, MatchArm, ModDecl, Param, Pattern, Program,
+    RecordDecl, RecordField, Stmt, StringPart, StringTemplate, UnaryOp, UseDecl, UseKind,
 };
 use chumsky::prelude::*;
 use chumsky::BoxedParser;
@@ -53,12 +53,18 @@ fn program_parser(source: Arc<str>) -> impl Parser<Token, Program, Error = Parse
     // Top-level declarations with recovery - skip to next keyword on error
     let top_level = mod_parser(source.clone())
         .or(use_parser(source.clone()))
+        .or(record_parser(source.clone()))
+        .or(enum_parser(source.clone()))
+        .or(const_parser(source.clone()))
         .or(agent_parser(source.clone()))
         .or(fn_parser(source.clone()))
         .recover_with(skip_then_retry_until([
             Token::KwMod,
             Token::KwUse,
             Token::KwPub,
+            Token::KwRecord,
+            Token::KwEnum,
+            Token::KwConst,
             Token::KwAgent,
             Token::KwFn,
             Token::KwRun,
@@ -73,6 +79,9 @@ fn program_parser(source: Arc<str>) -> impl Parser<Token, Program, Error = Parse
         move |(items, run_agent), span: Range<usize>| {
             let mut mod_decls = Vec::new();
             let mut use_decls = Vec::new();
+            let mut records = Vec::new();
+            let mut enums = Vec::new();
+            let mut consts = Vec::new();
             let mut agents = Vec::new();
             let mut functions = Vec::new();
 
@@ -80,6 +89,9 @@ fn program_parser(source: Arc<str>) -> impl Parser<Token, Program, Error = Parse
                 match item {
                     TopLevel::Mod(m) => mod_decls.push(m),
                     TopLevel::Use(u) => use_decls.push(u),
+                    TopLevel::Record(r) => records.push(r),
+                    TopLevel::Enum(e) => enums.push(e),
+                    TopLevel::Const(c) => consts.push(c),
                     TopLevel::Agent(a) => agents.push(a),
                     TopLevel::Function(f) => functions.push(f),
                 }
@@ -88,6 +100,9 @@ fn program_parser(source: Arc<str>) -> impl Parser<Token, Program, Error = Parse
             Program {
                 mod_decls,
                 use_decls,
+                records,
+                enums,
+                consts,
                 agents,
                 functions,
                 run_agent,
@@ -101,6 +116,9 @@ fn program_parser(source: Arc<str>) -> impl Parser<Token, Program, Error = Parse
 enum TopLevel {
     Mod(ModDecl),
     Use(UseDecl),
+    Record(RecordDecl),
+    Enum(EnumDecl),
+    Const(ConstDecl),
     Agent(AgentDecl),
     Function(FnDecl),
 }
@@ -220,6 +238,98 @@ fn use_parser(source: Arc<str>) -> impl Parser<Token, TopLevel, Error = ParseErr
 }
 
 // =============================================================================
+// Record, Enum, Const parsers
+// =============================================================================
+
+/// Parser for a record declaration: `record Point { x: Int, y: Int }`
+#[allow(clippy::needless_pass_by_value)]
+fn record_parser(source: Arc<str>) -> impl Parser<Token, TopLevel, Error = ParseError> {
+    let src = source.clone();
+    let src2 = source.clone();
+
+    // Record field: `name: Type`
+    let field = ident_token_parser(src.clone())
+        .then_ignore(just(Token::Colon))
+        .then(type_parser(src.clone()))
+        .map_with_span(move |(name, ty), span: Range<usize>| RecordField {
+            name,
+            ty,
+            span: make_span(&src, span),
+        });
+
+    just(Token::KwPub)
+        .or_not()
+        .then_ignore(just(Token::KwRecord))
+        .then(ident_token_parser(src2.clone()))
+        .then(
+            field
+                .separated_by(just(Token::Comma))
+                .allow_trailing()
+                .delimited_by(just(Token::LBrace), just(Token::RBrace)),
+        )
+        .map_with_span(move |((is_pub, name), fields), span: Range<usize>| {
+            TopLevel::Record(RecordDecl {
+                is_pub: is_pub.is_some(),
+                name,
+                fields,
+                span: make_span(&src2, span),
+            })
+        })
+}
+
+/// Parser for an enum declaration: `enum Status { Active, Pending, Done }`
+#[allow(clippy::needless_pass_by_value)]
+fn enum_parser(source: Arc<str>) -> impl Parser<Token, TopLevel, Error = ParseError> {
+    let src = source.clone();
+    let src2 = source.clone();
+
+    just(Token::KwPub)
+        .or_not()
+        .then_ignore(just(Token::KwEnum))
+        .then(ident_token_parser(src.clone()))
+        .then(
+            ident_token_parser(src.clone())
+                .separated_by(just(Token::Comma))
+                .allow_trailing()
+                .delimited_by(just(Token::LBrace), just(Token::RBrace)),
+        )
+        .map_with_span(move |((is_pub, name), variants), span: Range<usize>| {
+            TopLevel::Enum(EnumDecl {
+                is_pub: is_pub.is_some(),
+                name,
+                variants,
+                span: make_span(&src2, span),
+            })
+        })
+}
+
+/// Parser for a const declaration: `const MAX_RETRIES: Int = 3`
+#[allow(clippy::needless_pass_by_value)]
+fn const_parser(source: Arc<str>) -> impl Parser<Token, TopLevel, Error = ParseError> {
+    let src = source.clone();
+    let src2 = source.clone();
+
+    just(Token::KwPub)
+        .or_not()
+        .then_ignore(just(Token::KwConst))
+        .then(ident_token_parser(src.clone()))
+        .then_ignore(just(Token::Colon))
+        .then(type_parser(src.clone()))
+        .then_ignore(just(Token::Eq))
+        .then(expr_parser(src.clone()))
+        .then_ignore(just(Token::Semicolon))
+        .map_with_span(move |(((is_pub, name), ty), value), span: Range<usize>| {
+            TopLevel::Const(ConstDecl {
+                is_pub: is_pub.is_some(),
+                name,
+                ty,
+                value,
+                span: make_span(&src2, span),
+            })
+        })
+}
+
+// =============================================================================
 // Agent parsers
 // =============================================================================
 
@@ -231,8 +341,9 @@ fn agent_parser(source: Arc<str>) -> impl Parser<Token, TopLevel, Error = ParseE
     let src3 = source.clone();
     let src4 = source.clone();
 
-    let belief = just(Token::KwBelief)
-        .ignore_then(ident_token_parser(src.clone()))
+    // Agent state fields: `name: Type` (no `belief` keyword in RFC-0005)
+    // We still call them "beliefs" internally for backwards compatibility
+    let belief = ident_token_parser(src.clone())
         .then_ignore(just(Token::Colon))
         .then(type_parser(src.clone()))
         .map_with_span(move |(name, ty), span: Range<usize>| BeliefDecl {
@@ -566,7 +677,7 @@ fn expr_parser(source: Arc<str>) -> BoxedParser<'static, Token, Expr, ParseError
             });
 
         // spawn Agent { field: value, ... }
-        let field_init = ident_token_parser(src.clone())
+        let spawn_field_init = ident_token_parser(src.clone())
             .then_ignore(just(Token::Colon))
             .then(expr.clone())
             .map_with_span({
@@ -581,7 +692,11 @@ fn expr_parser(source: Arc<str>) -> BoxedParser<'static, Token, Expr, ParseError
         let spawn_expr = just(Token::KwSpawn)
             .ignore_then(ident_token_parser(src.clone()))
             .then_ignore(just(Token::LBrace))
-            .then(field_init.separated_by(just(Token::Comma)).allow_trailing())
+            .then(
+                spawn_field_init
+                    .separated_by(just(Token::Comma))
+                    .allow_trailing(),
+            )
             .then_ignore(just(Token::RBrace))
             .map_with_span({
                 let src = src.clone();
@@ -655,14 +770,82 @@ fn expr_parser(source: Arc<str>) -> BoxedParser<'static, Token, Expr, ParseError
                 }
             });
 
+        // Pattern for match arms
+        let pattern = pattern_parser(src.clone());
+
+        // match expression: match expr { Pattern => expr, ... }
+        let match_arm = pattern
+            .then_ignore(just(Token::FatArrow))
+            .then(expr.clone())
+            .map_with_span({
+                let src = src.clone();
+                move |(pattern, body), span: Range<usize>| MatchArm {
+                    pattern,
+                    body,
+                    span: make_span(&src, span),
+                }
+            });
+
+        let match_expr = just(Token::KwMatch)
+            .ignore_then(expr.clone())
+            .then(
+                match_arm
+                    .separated_by(just(Token::Comma))
+                    .allow_trailing()
+                    .delimited_by(just(Token::LBrace), just(Token::RBrace)),
+            )
+            .map_with_span({
+                let src = src.clone();
+                move |(scrutinee, arms), span: Range<usize>| Expr::Match {
+                    scrutinee: Box::new(scrutinee),
+                    arms,
+                    span: make_span(&src, span),
+                }
+            });
+
+        // Record construction: RecordName { field: value, ... }
+        // This is similar to spawn but without the spawn keyword
+        // Must come before var to avoid conflict
+        let record_field_init = ident_token_parser(src.clone())
+            .then_ignore(just(Token::Colon))
+            .then(expr.clone())
+            .map_with_span({
+                let src = src.clone();
+                move |(name, value), span: Range<usize>| FieldInit {
+                    name,
+                    value,
+                    span: make_span(&src, span),
+                }
+            });
+
+        let record_construct = ident_token_parser(src.clone())
+            .then_ignore(just(Token::LBrace))
+            .then(
+                record_field_init
+                    .separated_by(just(Token::Comma))
+                    .allow_trailing(),
+            )
+            .then_ignore(just(Token::RBrace))
+            .map_with_span({
+                let src = src.clone();
+                move |(name, fields), span: Range<usize>| Expr::RecordConstruct {
+                    name,
+                    fields,
+                    span: make_span(&src, span),
+                }
+            });
+
         // Atom: the base expression without binary ops
         // Box early to cut type complexity
+        // Note: record_construct must come before call_expr and var to parse `Name { ... }` correctly
         let atom = infer_expr
             .or(spawn_expr)
             .or(await_expr)
             .or(send_expr)
             .or(emit_expr)
+            .or(match_expr)
             .or(self_access)
+            .or(record_construct)
             .or(call_expr)
             .or(list)
             .or(paren)
@@ -670,12 +853,32 @@ fn expr_parser(source: Arc<str>) -> BoxedParser<'static, Token, Expr, ParseError
             .or(var)
             .boxed();
 
+        // Postfix field access: expr.field
+        let postfix = atom
+            .then(
+                just(Token::Dot)
+                    .ignore_then(ident_token_parser(src.clone()))
+                    .repeated(),
+            )
+            .foldl({
+                let src = src.clone();
+                move |object, field| {
+                    let span = make_span(&src, object.span().start..field.span.end);
+                    Expr::FieldAccess {
+                        object: Box::new(object),
+                        field,
+                        span,
+                    }
+                }
+            })
+            .boxed();
+
         // Unary expressions
         let unary = just(Token::Minus)
             .to(UnaryOp::Neg)
             .or(just(Token::Bang).to(UnaryOp::Not))
             .repeated()
-            .then(atom)
+            .then(postfix)
             .foldr(|op, operand| {
                 let span = operand.span().clone();
                 Expr::Unary {
@@ -917,6 +1120,103 @@ fn type_parser(source: Arc<str>) -> impl Parser<Token, TypeExpr, Error = ParseEr
     })
 }
 
+/// Parser for patterns in match expressions.
+fn pattern_parser(source: Arc<str>) -> impl Parser<Token, Pattern, Error = ParseError> + Clone {
+    let src = source.clone();
+    let src2 = source.clone();
+    let src3 = source.clone();
+    let src4 = source.clone();
+
+    // Wildcard pattern: `_`
+    let wildcard = filter_map(move |span: Range<usize>, token| match &token {
+        Token::Ident if src[span.start..span.end].eq("_") => Ok(()),
+        _ => Err(Simple::expected_input_found(span, vec![], Some(token))),
+    })
+    .map_with_span(move |_, span: Range<usize>| Pattern::Wildcard {
+        span: make_span(&src2, span),
+    });
+
+    // Literal patterns: 42, "hello", true, false
+    let lit_int = filter_map({
+        let src = src3.clone();
+        move |span: Range<usize>, token| match token {
+            Token::IntLit => {
+                let text = &src[span.start..span.end];
+                text.parse::<i64>()
+                    .map(Literal::Int)
+                    .map_err(|_| Simple::custom(span, "invalid integer literal"))
+            }
+            _ => Err(Simple::expected_input_found(
+                span,
+                vec![Some(Token::IntLit)],
+                Some(token),
+            )),
+        }
+    })
+    .map_with_span({
+        let src = src3.clone();
+        move |value, span: Range<usize>| Pattern::Literal {
+            value,
+            span: make_span(&src, span),
+        }
+    });
+
+    let lit_bool = just(Token::KwTrue)
+        .to(Literal::Bool(true))
+        .or(just(Token::KwFalse).to(Literal::Bool(false)))
+        .map_with_span({
+            let src = src3.clone();
+            move |value, span: Range<usize>| Pattern::Literal {
+                value,
+                span: make_span(&src, span),
+            }
+        });
+
+    // Enum variant: `EnumName::Variant` or just `Variant`
+    // Qualified: EnumName::Variant
+    let qualified_variant = ident_token_parser(src4.clone())
+        .then_ignore(just(Token::ColonColon))
+        .then(ident_token_parser(src4.clone()))
+        .map_with_span({
+            let src = src4.clone();
+            move |(enum_name, variant), span: Range<usize>| Pattern::Variant {
+                enum_name: Some(enum_name),
+                variant,
+                span: make_span(&src, span),
+            }
+        });
+
+    // Unqualified variant or binding: just an identifier
+    // We'll treat PascalCase as variant, snake_case as binding
+    // For now, let's just parse it as a binding (the checker will resolve)
+    let unqualified = ident_token_parser(src4.clone()).map_with_span({
+        let src = src4.clone();
+        move |name, span: Range<usize>| {
+            // If it looks like a variant (starts with uppercase), treat as variant
+            // Otherwise treat as binding
+            if name.name.chars().next().map_or(false, |c| c.is_uppercase()) {
+                Pattern::Variant {
+                    enum_name: None,
+                    variant: name,
+                    span: make_span(&src, span),
+                }
+            } else {
+                Pattern::Binding {
+                    name,
+                    span: make_span(&src, span),
+                }
+            }
+        }
+    });
+
+    // Order matters: try wildcard first, then qualified variant, then literals, then unqualified
+    wildcard
+        .or(qualified_variant)
+        .or(lit_int)
+        .or(lit_bool)
+        .or(unqualified)
+}
+
 /// Parser for literals.
 fn literal_parser(source: Arc<str>) -> impl Parser<Token, Expr, Error = ParseError> + Clone {
     let src = source.clone();
@@ -1125,8 +1425,8 @@ mod tests {
     fn parse_agent_with_beliefs() {
         let source = r#"
             agent Researcher {
-                belief topic: String
-                belief max_words: Int
+                topic: String
+                max_words: Int
 
                 on start {
                     emit(self.topic);
@@ -1271,7 +1571,8 @@ mod tests {
     fn parse_spawn_await() {
         let source = r#"
             agent Worker {
-                belief name: String
+                name: String
+
                 on start {
                     emit(self.name);
                 }
@@ -1368,10 +1669,10 @@ mod tests {
 
     #[test]
     fn recover_from_malformed_agent_continues_to_next() {
-        // First agent has syntax error, second is valid
+        // First agent has syntax error (missing type after colon), second is valid
         let source = r#"
             agent Broken {
-                belief x
+                x:
             }
 
             agent Main {
@@ -1560,10 +1861,10 @@ mod tests {
 
     #[test]
     fn recover_multiple_errors_reported() {
-        // Multiple errors in different places - incomplete belief missing type
+        // Multiple errors in different places - incomplete field missing type
         let source = r#"
             agent A {
-                belief x
+                x:
             }
 
             agent Main {
@@ -1575,7 +1876,7 @@ mod tests {
         "#;
 
         let (prog, errors) = parse_str(source);
-        // The malformed belief is missing `: Type` so should cause an error
+        // The malformed field is missing its type after `:` so should cause an error
         // However, with recovery the valid agent may still parse
         // Check that we either have errors or recovered successfully
         if errors.is_empty() {
@@ -1584,5 +1885,381 @@ mod tests {
             assert!(prog.agents.iter().any(|a| a.name.name == "Main"));
         }
         // Either way, the test passes - we're testing recovery works
+    }
+
+    #[test]
+    fn parse_record_declaration() {
+        let source = r#"
+            record Point {
+                x: Int,
+                y: Int,
+            }
+
+            agent Main {
+                on start {
+                    emit(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        assert_eq!(prog.records.len(), 1);
+        assert!(!prog.records[0].is_pub);
+        assert_eq!(prog.records[0].name.name, "Point");
+        assert_eq!(prog.records[0].fields.len(), 2);
+        assert_eq!(prog.records[0].fields[0].name.name, "x");
+        assert_eq!(prog.records[0].fields[1].name.name, "y");
+    }
+
+    #[test]
+    fn parse_pub_record() {
+        let source = r#"
+            pub record Config {
+                host: String,
+                port: Int,
+            }
+
+            agent Main {
+                on start { emit(0); }
+            }
+            run Main;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        assert_eq!(prog.records.len(), 1);
+        assert!(prog.records[0].is_pub);
+        assert_eq!(prog.records[0].name.name, "Config");
+    }
+
+    #[test]
+    fn parse_enum_declaration() {
+        let source = r#"
+            enum Status {
+                Active,
+                Pending,
+                Done,
+            }
+
+            agent Main {
+                on start {
+                    emit(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        assert_eq!(prog.enums.len(), 1);
+        assert!(!prog.enums[0].is_pub);
+        assert_eq!(prog.enums[0].name.name, "Status");
+        assert_eq!(prog.enums[0].variants.len(), 3);
+        assert_eq!(prog.enums[0].variants[0].name, "Active");
+        assert_eq!(prog.enums[0].variants[1].name, "Pending");
+        assert_eq!(prog.enums[0].variants[2].name, "Done");
+    }
+
+    #[test]
+    fn parse_pub_enum() {
+        let source = r#"
+            pub enum Priority { High, Medium, Low }
+
+            agent Main {
+                on start { emit(0); }
+            }
+            run Main;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        assert_eq!(prog.enums.len(), 1);
+        assert!(prog.enums[0].is_pub);
+        assert_eq!(prog.enums[0].name.name, "Priority");
+    }
+
+    #[test]
+    fn parse_const_declaration() {
+        let source = r#"
+            const MAX_RETRIES: Int = 3;
+
+            agent Main {
+                on start {
+                    emit(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        assert_eq!(prog.consts.len(), 1);
+        assert!(!prog.consts[0].is_pub);
+        assert_eq!(prog.consts[0].name.name, "MAX_RETRIES");
+        assert!(matches!(prog.consts[0].ty, sage_types::TypeExpr::Int));
+    }
+
+    #[test]
+    fn parse_pub_const() {
+        let source = r#"
+            pub const API_URL: String = "https://api.example.com";
+
+            agent Main {
+                on start { emit(0); }
+            }
+            run Main;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        assert_eq!(prog.consts.len(), 1);
+        assert!(prog.consts[0].is_pub);
+        assert_eq!(prog.consts[0].name.name, "API_URL");
+    }
+
+    #[test]
+    fn parse_multiple_type_declarations() {
+        let source = r#"
+            record Point { x: Int, y: Int }
+            enum Color { Red, Green, Blue }
+            const ORIGIN_X: Int = 0;
+
+            agent Main {
+                on start { emit(0); }
+            }
+            run Main;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        assert_eq!(prog.records.len(), 1);
+        assert_eq!(prog.enums.len(), 1);
+        assert_eq!(prog.consts.len(), 1);
+    }
+
+    #[test]
+    fn parse_match_expression() {
+        let source = r#"
+            enum Status { Active, Pending, Done }
+
+            agent Main {
+                on start {
+                    let s: Int = match Active {
+                        Active => 1,
+                        Pending => 2,
+                        Done => 3,
+                    };
+                    emit(s);
+                }
+            }
+            run Main;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        // Check the agent parsed
+        assert_eq!(prog.agents.len(), 1);
+        // Match is in the handler
+        let handler = &prog.agents[0].handlers[0];
+        let stmt = &handler.body.stmts[0];
+        if let Stmt::Let { value, .. } = stmt {
+            assert!(matches!(value, Expr::Match { .. }));
+        } else {
+            panic!("expected let statement with match");
+        }
+    }
+
+    #[test]
+    fn parse_match_with_wildcard() {
+        let source = r#"
+            agent Main {
+                on start {
+                    let x = 5;
+                    let result = match x {
+                        1 => 10,
+                        2 => 20,
+                        _ => 0,
+                    };
+                    emit(result);
+                }
+            }
+            run Main;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        assert_eq!(prog.agents.len(), 1);
+    }
+
+    #[test]
+    fn parse_record_construction() {
+        let source = r#"
+            record Point { x: Int, y: Int }
+
+            agent Main {
+                on start {
+                    let p = Point { x: 10, y: 20 };
+                    emit(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        assert_eq!(prog.records.len(), 1);
+        assert_eq!(prog.agents.len(), 1);
+
+        // Check the let statement has a record construction
+        let handler = &prog.agents[0].handlers[0];
+        let stmt = &handler.body.stmts[0];
+        if let Stmt::Let { value, .. } = stmt {
+            if let Expr::RecordConstruct { name, fields, .. } = value {
+                assert_eq!(name.name, "Point");
+                assert_eq!(fields.len(), 2);
+                assert_eq!(fields[0].name.name, "x");
+                assert_eq!(fields[1].name.name, "y");
+            } else {
+                panic!("expected RecordConstruct");
+            }
+        } else {
+            panic!("expected let statement");
+        }
+    }
+
+    #[test]
+    fn parse_match_with_qualified_variant() {
+        let source = r#"
+            enum Status { Active, Pending }
+
+            fn get_status() -> Int {
+                return 1;
+            }
+
+            agent Main {
+                on start {
+                    let s = get_status();
+                    let result = match s {
+                        Status::Active => 1,
+                        Status::Pending => 0,
+                    };
+                    emit(result);
+                }
+            }
+            run Main;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        assert_eq!(prog.enums.len(), 1);
+        assert_eq!(prog.agents.len(), 1);
+    }
+
+    #[test]
+    fn parse_field_access() {
+        let source = r#"
+            record Point { x: Int, y: Int }
+
+            agent Main {
+                on start {
+                    let p = Point { x: 10, y: 20 };
+                    let x_val = p.x;
+                    let y_val = p.y;
+                    emit(x_val);
+                }
+            }
+            run Main;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        assert_eq!(prog.records.len(), 1);
+        assert_eq!(prog.agents.len(), 1);
+
+        // Check the field access
+        let handler = &prog.agents[0].handlers[0];
+        let stmt = &handler.body.stmts[1]; // p.x assignment
+        if let Stmt::Let { value, .. } = stmt {
+            if let Expr::FieldAccess { field, .. } = value {
+                assert_eq!(field.name, "x");
+            } else {
+                panic!("expected FieldAccess");
+            }
+        } else {
+            panic!("expected let statement");
+        }
+    }
+
+    #[test]
+    fn parse_chained_field_access() {
+        let source = r#"
+            record Inner { val: Int }
+            record Outer { inner: Inner }
+
+            agent Main {
+                on start {
+                    let inner = Inner { val: 42 };
+                    let outer = Outer { inner: inner };
+                    let v = outer.inner.val;
+                    emit(v);
+                }
+            }
+            run Main;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        assert_eq!(prog.records.len(), 2);
+        assert_eq!(prog.agents.len(), 1);
+
+        // Check the chained field access: outer.inner.val
+        let handler = &prog.agents[0].handlers[0];
+        let stmt = &handler.body.stmts[2]; // outer.inner.val assignment
+        if let Stmt::Let { value, .. } = stmt {
+            if let Expr::FieldAccess {
+                object, field: val, ..
+            } = value
+            {
+                assert_eq!(val.name, "val");
+                // object should be outer.inner
+                if let Expr::FieldAccess { field: inner, .. } = object.as_ref() {
+                    assert_eq!(inner.name, "inner");
+                } else {
+                    panic!("expected nested FieldAccess");
+                }
+            } else {
+                panic!("expected FieldAccess");
+            }
+        } else {
+            panic!("expected let statement");
+        }
     }
 }

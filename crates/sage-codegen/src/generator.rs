@@ -3,8 +3,8 @@
 use crate::emit::Emitter;
 use sage_loader::ModuleTree;
 use sage_parser::{
-    AgentDecl, BinOp, Block, EventKind, Expr, FnDecl, Literal, Program, Stmt, StringPart,
-    UnaryOp,
+    AgentDecl, BinOp, Block, ConstDecl, EnumDecl, EventKind, Expr, FnDecl, Literal, Program,
+    RecordDecl, Stmt, StringPart, UnaryOp,
 };
 use sage_types::TypeExpr;
 
@@ -53,6 +53,24 @@ impl Generator {
         self.emit.writeln("use sage_runtime::prelude::*;");
         self.emit.blank_line();
 
+        // Constants
+        for const_decl in &program.consts {
+            self.generate_const(const_decl);
+            self.emit.blank_line();
+        }
+
+        // Enums
+        for enum_decl in &program.enums {
+            self.generate_enum(enum_decl);
+            self.emit.blank_line();
+        }
+
+        // Records
+        for record in &program.records {
+            self.generate_record(record);
+            self.emit.blank_line();
+        }
+
         // Functions
         for func in &program.functions {
             self.generate_function(func);
@@ -94,6 +112,21 @@ impl Generator {
                     self.emit.writeln(&path.join("::"));
                 }
 
+                for const_decl in &module.program.consts {
+                    self.generate_const(const_decl);
+                    self.emit.blank_line();
+                }
+
+                for enum_decl in &module.program.enums {
+                    self.generate_enum(enum_decl);
+                    self.emit.blank_line();
+                }
+
+                for record in &module.program.records {
+                    self.generate_record(record);
+                    self.emit.blank_line();
+                }
+
                 for func in &module.program.functions {
                     self.generate_function(func);
                     self.emit.blank_line();
@@ -109,6 +142,21 @@ impl Generator {
         // Then, generate the root module
         if let Some(root_module) = tree.modules.get(&tree.root) {
             self.emit.writeln("// Root module");
+
+            for const_decl in &root_module.program.consts {
+                self.generate_const(const_decl);
+                self.emit.blank_line();
+            }
+
+            for enum_decl in &root_module.program.enums {
+                self.generate_enum(enum_decl);
+                self.emit.blank_line();
+            }
+
+            for record in &root_module.program.records {
+                self.generate_record(record);
+                self.emit.blank_line();
+            }
 
             for func in &root_module.program.functions {
                 self.generate_function(func);
@@ -148,6 +196,55 @@ serde_json = "1"
 [workspace]
 "#
         )
+    }
+
+    fn generate_const(&mut self, const_decl: &ConstDecl) {
+        if const_decl.is_pub {
+            self.emit.write("pub ");
+        }
+        self.emit.write("const ");
+        self.emit.write(&const_decl.name.name);
+        self.emit.write(": ");
+        self.emit_type(&const_decl.ty);
+        self.emit.write(" = ");
+        self.generate_expr(&const_decl.value);
+        self.emit.writeln(";");
+    }
+
+    fn generate_enum(&mut self, enum_decl: &EnumDecl) {
+        if enum_decl.is_pub {
+            self.emit.write("pub ");
+        }
+        self.emit.writeln("#[derive(Debug, Clone, Copy, PartialEq, Eq)]");
+        self.emit.write("enum ");
+        self.emit.write(&enum_decl.name.name);
+        self.emit.writeln(" {");
+        self.emit.indent();
+        for variant in &enum_decl.variants {
+            self.emit.write(&variant.name);
+            self.emit.writeln(",");
+        }
+        self.emit.dedent();
+        self.emit.writeln("}");
+    }
+
+    fn generate_record(&mut self, record: &RecordDecl) {
+        if record.is_pub {
+            self.emit.write("pub ");
+        }
+        self.emit.writeln("#[derive(Debug, Clone)]");
+        self.emit.write("struct ");
+        self.emit.write(&record.name.name);
+        self.emit.writeln(" {");
+        self.emit.indent();
+        for field in &record.fields {
+            self.emit.write(&field.name.name);
+            self.emit.write(": ");
+            self.emit_type(&field.ty);
+            self.emit.writeln(",");
+        }
+        self.emit.dedent();
+        self.emit.writeln("}");
     }
 
     fn generate_function(&mut self, func: &FnDecl) {
@@ -498,6 +595,72 @@ serde_json = "1"
             Expr::StringInterp { template, .. } => {
                 self.emit_string_template(template);
             }
+
+            // TODO: Implement in RFC-0005
+            Expr::Match {
+                scrutinee, arms, ..
+            } => {
+                self.emit.write("match ");
+                self.generate_expr(scrutinee);
+                self.emit.writeln(" {");
+                self.emit.indent();
+                for arm in arms {
+                    self.emit_pattern(&arm.pattern);
+                    self.emit.write(" => ");
+                    self.generate_expr(&arm.body);
+                    self.emit.writeln(",");
+                }
+                self.emit.dedent();
+                self.emit.write("}");
+            }
+
+            // TODO: Implement in RFC-0005
+            Expr::RecordConstruct { name, fields, .. } => {
+                self.emit.write(&name.name);
+                self.emit.write(" { ");
+                for (i, field) in fields.iter().enumerate() {
+                    if i > 0 {
+                        self.emit.write(", ");
+                    }
+                    self.emit.write(&field.name.name);
+                    self.emit.write(": ");
+                    self.generate_expr(&field.value);
+                }
+                self.emit.write(" }");
+            }
+
+            // TODO: Implement in RFC-0005
+            Expr::FieldAccess { object, field, .. } => {
+                self.generate_expr(object);
+                self.emit.write(".");
+                self.emit.write(&field.name);
+            }
+        }
+    }
+
+    fn emit_pattern(&mut self, pattern: &sage_parser::Pattern) {
+        use sage_parser::Pattern;
+        match pattern {
+            Pattern::Wildcard { .. } => {
+                self.emit.write("_");
+            }
+            Pattern::Variant {
+                enum_name,
+                variant,
+                ..
+            } => {
+                if let Some(enum_name) = enum_name {
+                    self.emit.write(&enum_name.name);
+                    self.emit.write("::");
+                }
+                self.emit.write(&variant.name);
+            }
+            Pattern::Literal { value, .. } => {
+                self.emit_literal(value);
+            }
+            Pattern::Binding { name, .. } => {
+                self.emit.write(&name.name);
+            }
         }
     }
 
@@ -756,7 +919,7 @@ mod tests {
     fn generate_agent_with_beliefs() {
         let source = r#"
             agent Worker {
-                belief value: Int
+                value: Int
 
                 on start {
                     emit(self.value * 2);
@@ -904,5 +1067,99 @@ run Main;
         assert!(project.main_rs.contains("struct Main;"));
         assert!(project.main_rs.contains("async fn on_start"));
         assert!(project.main_rs.contains("#[tokio::main]"));
+    }
+
+    #[test]
+    fn generate_record_declaration() {
+        let source = r#"
+            record Point {
+                x: Int,
+                y: Int,
+            }
+            agent Main {
+                on start {
+                    let p = Point { x: 10, y: 20 };
+                    emit(p.x);
+                }
+            }
+            run Main;
+        "#;
+
+        let output = generate_source(source);
+        assert!(output.contains("#[derive(Debug, Clone)]"));
+        assert!(output.contains("struct Point {"));
+        assert!(output.contains("x: i64,"));
+        assert!(output.contains("y: i64,"));
+        assert!(output.contains("Point { x: 10_i64, y: 20_i64 }"));
+        assert!(output.contains("p.x"));
+    }
+
+    #[test]
+    fn generate_enum_declaration() {
+        let source = r#"
+            enum Status {
+                Active,
+                Inactive,
+                Pending,
+            }
+            agent Main {
+                on start {
+                    emit(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let output = generate_source(source);
+        assert!(output.contains("#[derive(Debug, Clone, Copy, PartialEq, Eq)]"));
+        assert!(output.contains("enum Status {"));
+        assert!(output.contains("Active,"));
+        assert!(output.contains("Inactive,"));
+        assert!(output.contains("Pending,"));
+    }
+
+    #[test]
+    fn generate_const_declaration() {
+        let source = r#"
+            const MAX_SIZE: Int = 100;
+            const GREETING: String = "Hello";
+            agent Main {
+                on start {
+                    emit(MAX_SIZE);
+                }
+            }
+            run Main;
+        "#;
+
+        let output = generate_source(source);
+        assert!(output.contains("const MAX_SIZE: i64 = 100_i64;"));
+        assert!(output.contains("const GREETING: String = \"Hello\".to_string();"));
+    }
+
+    #[test]
+    fn generate_match_expression() {
+        let source = r#"
+            enum Status {
+                Active,
+                Inactive,
+            }
+            fn check_status(s: Status) -> Int {
+                return match s {
+                    Active => 1,
+                    Inactive => 0,
+                };
+            }
+            agent Main {
+                on start {
+                    emit(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let output = generate_source(source);
+        assert!(output.contains("match s {"));
+        assert!(output.contains("Active => 1_i64,"));
+        assert!(output.contains("Inactive => 0_i64,"));
     }
 }

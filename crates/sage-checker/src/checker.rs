@@ -1,10 +1,13 @@
 //! Type checker and name resolver for Sage programs.
 
 use crate::error::CheckError;
-use crate::scope::{resolve_type, AgentInfo, FunctionInfo, Scope, SymbolTable};
+use crate::scope::{
+    resolve_type, AgentInfo, ConstInfo, EnumInfo, FunctionInfo, RecordInfo, Scope, SymbolTable,
+};
 use crate::types::Type;
 use sage_parser::{
-    AgentDecl, BinOp, Block, EventKind, Expr, FnDecl, Literal, Program, Stmt, UnaryOp,
+    AgentDecl, BinOp, Block, ConstDecl, EventKind, Expr, FnDecl, Literal, Pattern, Program, Stmt,
+    UnaryOp,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -83,6 +86,10 @@ impl Checker {
 
         for func in &program.functions {
             self.check_function(func);
+        }
+
+        for const_decl in &program.consts {
+            self.check_const(const_decl);
         }
 
         // Validate the entry agent
@@ -166,6 +173,77 @@ impl Checker {
                 module_path: self.current_module.clone(),
             });
         }
+
+        // Collect records
+        for record in &program.records {
+            if self.symbols.has_record(&record.name.name) {
+                self.errors.push(CheckError::duplicate_definition(
+                    &record.name.name,
+                    &record.span,
+                ));
+                continue;
+            }
+
+            let mut fields = HashMap::new();
+            let mut field_order = Vec::new();
+            for field in &record.fields {
+                let ty = resolve_type(&field.ty);
+                fields.insert(field.name.name.clone(), ty);
+                field_order.push(field.name.name.clone());
+            }
+
+            self.symbols.define_record(RecordInfo {
+                name: record.name.name.clone(),
+                fields,
+                field_order,
+                is_pub: record.is_pub,
+                module_path: self.current_module.clone(),
+            });
+        }
+
+        // Collect enums
+        for enum_decl in &program.enums {
+            if self.symbols.has_enum(&enum_decl.name.name) {
+                self.errors.push(CheckError::duplicate_definition(
+                    &enum_decl.name.name,
+                    &enum_decl.span,
+                ));
+                continue;
+            }
+
+            let variants: Vec<String> = enum_decl
+                .variants
+                .iter()
+                .map(|v| v.name.clone())
+                .collect();
+
+            self.symbols.define_enum(EnumInfo {
+                name: enum_decl.name.name.clone(),
+                variants,
+                is_pub: enum_decl.is_pub,
+                module_path: self.current_module.clone(),
+            });
+        }
+
+        // Collect consts
+        for const_decl in &program.consts {
+            if self.symbols.has_const(&const_decl.name.name) {
+                self.errors.push(CheckError::duplicate_definition(
+                    &const_decl.name.name,
+                    &const_decl.span,
+                ));
+                continue;
+            }
+
+            let ty = resolve_type(&const_decl.ty);
+
+            self.symbols.define_const(ConstInfo {
+                name: const_decl.name.name.clone(),
+                ty,
+                is_pub: const_decl.is_pub,
+                module_path: self.current_module.clone(),
+            });
+        }
     }
 
     // =========================================================================
@@ -221,6 +299,39 @@ impl Checker {
         self.pop_scope();
         self.in_function = false;
         self.expected_return = None;
+    }
+
+    fn check_const(&mut self, const_decl: &ConstDecl) {
+        let declared_ty = resolve_type(&const_decl.ty);
+        let value_ty = self.check_expr(&const_decl.value);
+
+        if !value_ty.is_compatible_with(&declared_ty) {
+            self.errors.push(CheckError::type_mismatch(
+                declared_ty.to_string(),
+                value_ty.to_string(),
+                const_decl.value.span(),
+            ));
+        }
+
+        // Verify the value is a constant expression (for now, just literals)
+        if !Self::is_const_expr(&const_decl.value) {
+            self.errors.push(CheckError::type_mismatch(
+                "constant expression",
+                "non-constant expression",
+                const_decl.value.span(),
+            ));
+        }
+    }
+
+    /// Check if an expression is a constant expression (evaluable at compile time).
+    fn is_const_expr(expr: &Expr) -> bool {
+        match expr {
+            Expr::Literal { .. } => true,
+            Expr::Unary { operand, .. } => Self::is_const_expr(operand),
+            Expr::Paren { inner, .. } => Self::is_const_expr(inner),
+            // For now, we don't allow complex constant expressions
+            _ => false,
+        }
     }
 
     fn check_block(&mut self, block: &Block) {
@@ -599,6 +710,156 @@ impl Checker {
                 }
                 Type::String
             }
+
+            Expr::Match { scrutinee, arms, span } => {
+                let scrutinee_ty = self.check_expr(scrutinee);
+
+                // Track covered patterns for exhaustiveness
+                let mut has_wildcard = false;
+                let mut covered_variants: HashSet<String> = HashSet::new();
+                let mut covered_bool_true = false;
+                let mut covered_bool_false = false;
+
+                let mut result_ty = Type::Error;
+                for arm in arms {
+                    // Check pattern and get any bindings
+                    self.push_scope();
+                    self.check_pattern(&arm.pattern, &scrutinee_ty);
+
+                    // Track coverage for exhaustiveness
+                    match &arm.pattern {
+                        Pattern::Wildcard { .. } | Pattern::Binding { .. } => {
+                            has_wildcard = true;
+                        }
+                        Pattern::Variant { variant, .. } => {
+                            covered_variants.insert(variant.name.clone());
+                        }
+                        Pattern::Literal { value: Literal::Bool(b), .. } => {
+                            if *b {
+                                covered_bool_true = true;
+                            } else {
+                                covered_bool_false = true;
+                            }
+                        }
+                        Pattern::Literal { .. } => {
+                            // Literal patterns don't guarantee coverage
+                        }
+                    }
+
+                    // Check body expression
+                    let arm_ty = self.check_expr(&arm.body);
+                    self.pop_scope();
+
+                    if result_ty.is_error() {
+                        result_ty = arm_ty;
+                    }
+                }
+
+                // Check exhaustiveness
+                if !has_wildcard {
+                    let is_exhaustive = match &scrutinee_ty {
+                        Type::Named(name) => {
+                            // Check if it's an enum and all variants are covered
+                            if let Some(enum_info) = self.symbols.get_enum(name) {
+                                enum_info.variants.iter().all(|v| covered_variants.contains(v))
+                            } else {
+                                // Not an enum - needs wildcard
+                                false
+                            }
+                        }
+                        Type::Bool => {
+                            covered_bool_true && covered_bool_false
+                        }
+                        Type::Error => true, // Don't report exhaustiveness errors on error types
+                        _ => false, // Other types need a wildcard to be exhaustive
+                    };
+
+                    if !is_exhaustive {
+                        self.errors.push(CheckError::non_exhaustive_match(span));
+                    }
+                }
+
+                result_ty
+            }
+
+            Expr::RecordConstruct { name, fields, span } => {
+                let Some(record_info) = self.symbols.get_record(&name.name).cloned() else {
+                    self.errors
+                        .push(CheckError::undefined_type(&name.name, span));
+                    return Type::Error;
+                };
+
+                // Track which fields have been provided
+                let mut provided: HashMap<String, bool> = record_info
+                    .fields
+                    .keys()
+                    .map(|k| (k.clone(), false))
+                    .collect();
+
+                for field in fields {
+                    let field_name = &field.name.name;
+
+                    if let Some(expected_ty) = record_info.fields.get(field_name) {
+                        provided.insert(field_name.clone(), true);
+                        let actual_ty = self.check_expr(&field.value);
+
+                        if !actual_ty.is_compatible_with(expected_ty) {
+                            self.errors.push(CheckError::type_mismatch(
+                                expected_ty.to_string(),
+                                actual_ty.to_string(),
+                                field.value.span(),
+                            ));
+                        }
+                    } else {
+                        self.errors
+                            .push(CheckError::unknown_field(field_name, &field.span));
+                    }
+                }
+
+                // Check for missing fields
+                for (field_name, was_provided) in &provided {
+                    if !was_provided {
+                        self.errors
+                            .push(CheckError::missing_field(field_name, &name.name, span));
+                    }
+                }
+
+                Type::Named(name.name.clone())
+            }
+
+            Expr::FieldAccess { object, field, span } => {
+                let obj_ty = self.check_expr(object);
+
+                // Get the record name from the type
+                let record_name = match &obj_ty {
+                    Type::Named(name) => name.clone(),
+                    Type::Error => return Type::Error,
+                    _ => {
+                        self.errors.push(CheckError::field_access_on_non_record(
+                            obj_ty.to_string(),
+                            span,
+                        ));
+                        return Type::Error;
+                    }
+                };
+
+                // Look up the record and get field type
+                if let Some(record_info) = self.symbols.get_record(&record_name) {
+                    if let Some(field_ty) = record_info.fields.get(&field.name) {
+                        field_ty.clone()
+                    } else {
+                        self.errors.push(CheckError::unknown_field(&field.name, span));
+                        Type::Error
+                    }
+                } else {
+                    // It's a Named type but not a record - could be enum
+                    self.errors.push(CheckError::field_access_on_non_record(
+                        obj_ty.to_string(),
+                        span,
+                    ));
+                    Type::Error
+                }
+            }
         }
     }
 
@@ -720,6 +981,90 @@ impl Checker {
                     self.errors
                         .push(CheckError::invalid_unary_op("!", operand.to_string(), span));
                     Type::Error
+                }
+            }
+        }
+    }
+
+    fn check_pattern(&mut self, pattern: &Pattern, scrutinee_ty: &Type) {
+        match pattern {
+            Pattern::Wildcard { .. } => {
+                // Wildcard matches anything - no bindings introduced
+            }
+            Pattern::Binding { name, .. } => {
+                // Binding pattern introduces a variable with the scrutinee's type
+                self.define_var(&name.name, scrutinee_ty.clone());
+            }
+            Pattern::Variant { enum_name, variant, span } => {
+                // Check that the scrutinee is the correct enum type
+                let expected_enum = match scrutinee_ty {
+                    Type::Named(name) => Some(name.clone()),
+                    Type::Error => return, // Don't cascade errors
+                    _ => None,
+                };
+
+                if let Some(enum_name_str) = &enum_name {
+                    // Qualified variant: Status::Active
+                    if let Some(expected) = &expected_enum {
+                        if enum_name_str.name != *expected {
+                            self.errors.push(CheckError::type_mismatch(
+                                expected,
+                                &enum_name_str.name,
+                                span,
+                            ));
+                            return;
+                        }
+                    }
+
+                    // Check that the variant exists in the enum
+                    if let Some(enum_info) = self.symbols.get_enum(&enum_name_str.name) {
+                        if !enum_info.variants.contains(&variant.name) {
+                            self.errors.push(CheckError::undefined_enum_variant(
+                                &variant.name,
+                                &enum_name_str.name,
+                                span,
+                            ));
+                        }
+                    } else {
+                        self.errors.push(CheckError::undefined_type(&enum_name_str.name, span));
+                    }
+                } else {
+                    // Unqualified variant: just `Active`
+                    // Need to check against the scrutinee's enum type
+                    if let Some(ref enum_name_str) = expected_enum {
+                        if let Some(enum_info) = self.symbols.get_enum(enum_name_str) {
+                            if !enum_info.variants.contains(&variant.name) {
+                                self.errors.push(CheckError::undefined_enum_variant(
+                                    &variant.name,
+                                    enum_name_str,
+                                    span,
+                                ));
+                            }
+                        }
+                    } else if !scrutinee_ty.is_error() {
+                        self.errors.push(CheckError::type_mismatch(
+                            "enum type",
+                            scrutinee_ty.to_string(),
+                            span,
+                        ));
+                    }
+                }
+            }
+            Pattern::Literal { value, span } => {
+                // Check that the literal type matches the scrutinee type
+                let lit_ty = match value {
+                    Literal::Int(_) => Type::Int,
+                    Literal::Float(_) => Type::Float,
+                    Literal::Bool(_) => Type::Bool,
+                    Literal::String(_) => Type::String,
+                };
+
+                if !lit_ty.is_compatible_with(scrutinee_ty) && !scrutinee_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        scrutinee_ty.to_string(),
+                        lit_ty.to_string(),
+                        span,
+                    ));
                 }
             }
         }
@@ -916,6 +1261,11 @@ impl Checker {
             }
         }
 
+        // Check if it's a constant
+        if let Some(const_info) = self.symbols.get_const(name) {
+            return const_info.ty.clone();
+        }
+
         self.errors.push(CheckError::undefined_variable(name, span));
         Type::Error
     }
@@ -1086,6 +1436,83 @@ impl MultiModuleChecker {
                 module_path: module_path.clone(),
             });
         }
+
+        // Collect records
+        for record in &program.records {
+            let full_name = Self::make_qualified_name(module_path, &record.name.name);
+
+            if self.symbols.has_record(&full_name) {
+                self.errors.push(CheckError::duplicate_definition(
+                    &full_name,
+                    &record.span,
+                ));
+                continue;
+            }
+
+            let mut fields = HashMap::new();
+            let mut field_order = Vec::new();
+            for field in &record.fields {
+                let ty = resolve_type(&field.ty);
+                fields.insert(field.name.name.clone(), ty);
+                field_order.push(field.name.name.clone());
+            }
+
+            self.symbols.define_record(RecordInfo {
+                name: record.name.name.clone(),
+                fields,
+                field_order,
+                is_pub: record.is_pub,
+                module_path: module_path.clone(),
+            });
+        }
+
+        // Collect enums
+        for enum_decl in &program.enums {
+            let full_name = Self::make_qualified_name(module_path, &enum_decl.name.name);
+
+            if self.symbols.has_enum(&full_name) {
+                self.errors.push(CheckError::duplicate_definition(
+                    &full_name,
+                    &enum_decl.span,
+                ));
+                continue;
+            }
+
+            let variants: Vec<String> = enum_decl
+                .variants
+                .iter()
+                .map(|v| v.name.clone())
+                .collect();
+
+            self.symbols.define_enum(EnumInfo {
+                name: enum_decl.name.name.clone(),
+                variants,
+                is_pub: enum_decl.is_pub,
+                module_path: module_path.clone(),
+            });
+        }
+
+        // Collect consts
+        for const_decl in &program.consts {
+            let full_name = Self::make_qualified_name(module_path, &const_decl.name.name);
+
+            if self.symbols.has_const(&full_name) {
+                self.errors.push(CheckError::duplicate_definition(
+                    &full_name,
+                    &const_decl.span,
+                ));
+                continue;
+            }
+
+            let ty = resolve_type(&const_decl.ty);
+
+            self.symbols.define_const(ConstInfo {
+                name: const_decl.name.name.clone(),
+                ty,
+                is_pub: const_decl.is_pub,
+                module_path: module_path.clone(),
+            });
+        }
     }
 
     fn resolve_imports(
@@ -1156,6 +1583,30 @@ impl MultiModuleChecker {
                                 );
                             }
                         }
+                        for record in &target_module.program.records {
+                            if record.is_pub {
+                                module_imports.insert(
+                                    record.name.name.clone(),
+                                    (target_path.clone(), record.name.name.clone()),
+                                );
+                            }
+                        }
+                        for enum_decl in &target_module.program.enums {
+                            if enum_decl.is_pub {
+                                module_imports.insert(
+                                    enum_decl.name.name.clone(),
+                                    (target_path.clone(), enum_decl.name.name.clone()),
+                                );
+                            }
+                        }
+                        for const_decl in &target_module.program.consts {
+                            if const_decl.is_pub {
+                                module_imports.insert(
+                                    const_decl.name.name.clone(),
+                                    (target_path.clone(), const_decl.name.name.clone()),
+                                );
+                            }
+                        }
                     } else {
                         self.errors.push(CheckError::module_not_found(
                             target_path.join("::"),
@@ -1178,7 +1629,6 @@ impl MultiModuleChecker {
         span: &sage_types::Span,
     ) -> bool {
         // Check if the item exists and is accessible
-        // For now, we look for agents and functions
 
         // Check agents
         for (_, agent_info) in self.symbols.iter_agents() {
@@ -1199,6 +1649,51 @@ impl MultiModuleChecker {
         for (_, func_info) in self.symbols.iter_functions() {
             if &func_info.module_path == target_module && func_info.name == item_name {
                 if !func_info.is_pub && &func_info.module_path != from_module {
+                    self.errors.push(CheckError::private_item(
+                        item_name,
+                        target_module.join("::"),
+                        span,
+                    ));
+                    return false;
+                }
+                return true;
+            }
+        }
+
+        // Check records
+        for (_, record_info) in self.symbols.iter_records() {
+            if &record_info.module_path == target_module && record_info.name == item_name {
+                if !record_info.is_pub && &record_info.module_path != from_module {
+                    self.errors.push(CheckError::private_item(
+                        item_name,
+                        target_module.join("::"),
+                        span,
+                    ));
+                    return false;
+                }
+                return true;
+            }
+        }
+
+        // Check enums
+        for (_, enum_info) in self.symbols.iter_enums() {
+            if &enum_info.module_path == target_module && enum_info.name == item_name {
+                if !enum_info.is_pub && &enum_info.module_path != from_module {
+                    self.errors.push(CheckError::private_item(
+                        item_name,
+                        target_module.join("::"),
+                        span,
+                    ));
+                    return false;
+                }
+                return true;
+            }
+        }
+
+        // Check consts
+        for (_, const_info) in self.symbols.iter_consts() {
+            if &const_info.module_path == target_module && const_info.name == item_name {
+                if !const_info.is_pub && &const_info.module_path != from_module {
                     self.errors.push(CheckError::private_item(
                         item_name,
                         target_module.join("::"),
@@ -1698,6 +2193,155 @@ impl<'a> ModuleChecker<'a> {
                 }
                 Type::String
             }
+
+            Expr::Match { scrutinee, arms, span } => {
+                let scrutinee_ty = self.check_expr(scrutinee);
+
+                // Track covered patterns for exhaustiveness
+                let mut has_wildcard = false;
+                let mut covered_variants: HashSet<String> = HashSet::new();
+                let mut covered_bool_true = false;
+                let mut covered_bool_false = false;
+
+                let mut result_ty = Type::Error;
+                for arm in arms {
+                    // Check pattern and get any bindings
+                    self.push_scope();
+                    self.check_pattern(&arm.pattern, &scrutinee_ty);
+
+                    // Track coverage for exhaustiveness
+                    match &arm.pattern {
+                        Pattern::Wildcard { .. } | Pattern::Binding { .. } => {
+                            has_wildcard = true;
+                        }
+                        Pattern::Variant { variant, .. } => {
+                            covered_variants.insert(variant.name.clone());
+                        }
+                        Pattern::Literal { value: Literal::Bool(b), .. } => {
+                            if *b {
+                                covered_bool_true = true;
+                            } else {
+                                covered_bool_false = true;
+                            }
+                        }
+                        Pattern::Literal { .. } => {
+                            // Literal patterns don't guarantee coverage
+                        }
+                    }
+
+                    // Check body expression
+                    let arm_ty = self.check_expr(&arm.body);
+                    self.pop_scope();
+
+                    if result_ty.is_error() {
+                        result_ty = arm_ty;
+                    }
+                }
+
+                // Check exhaustiveness
+                if !has_wildcard {
+                    let is_exhaustive = match &scrutinee_ty {
+                        Type::Named(name) => {
+                            // Check if it's an enum and all variants are covered
+                            if let Some(enum_info) = self.lookup_enum(name) {
+                                enum_info.variants.iter().all(|v| covered_variants.contains(v))
+                            } else {
+                                // Not an enum - needs wildcard
+                                false
+                            }
+                        }
+                        Type::Bool => {
+                            covered_bool_true && covered_bool_false
+                        }
+                        Type::Error => true, // Don't report exhaustiveness errors on error types
+                        _ => false, // Other types need a wildcard to be exhaustive
+                    };
+
+                    if !is_exhaustive {
+                        self.errors.push(CheckError::non_exhaustive_match(span));
+                    }
+                }
+
+                result_ty
+            }
+
+            Expr::RecordConstruct { name, fields, span } => {
+                let record_info = self.lookup_record(&name.name);
+                let Some(record_info) = record_info else {
+                    self.errors.push(CheckError::undefined_type(&name.name, span));
+                    return Type::Error;
+                };
+                let record_info = record_info.clone();
+
+                // Track which fields have been provided
+                let mut provided: HashMap<String, bool> = record_info
+                    .fields
+                    .keys()
+                    .map(|k| (k.clone(), false))
+                    .collect();
+
+                for field in fields {
+                    let field_name = &field.name.name;
+
+                    if let Some(expected_ty) = record_info.fields.get(field_name) {
+                        provided.insert(field_name.clone(), true);
+                        let actual_ty = self.check_expr(&field.value);
+
+                        if !actual_ty.is_compatible_with(expected_ty) {
+                            self.errors.push(CheckError::type_mismatch(
+                                expected_ty.to_string(),
+                                actual_ty.to_string(),
+                                field.value.span(),
+                            ));
+                        }
+                    } else {
+                        self.errors.push(CheckError::unknown_field(field_name, &field.span));
+                    }
+                }
+
+                // Check for missing fields
+                for (field_name, was_provided) in &provided {
+                    if !was_provided {
+                        self.errors.push(CheckError::missing_field(field_name, &name.name, span));
+                    }
+                }
+
+                Type::Named(name.name.clone())
+            }
+
+            Expr::FieldAccess { object, field, span } => {
+                let obj_ty = self.check_expr(object);
+
+                // Get the record name from the type
+                let record_name = match &obj_ty {
+                    Type::Named(name) => name.clone(),
+                    Type::Error => return Type::Error,
+                    _ => {
+                        self.errors.push(CheckError::field_access_on_non_record(
+                            obj_ty.to_string(),
+                            span,
+                        ));
+                        return Type::Error;
+                    }
+                };
+
+                // Look up the record and get field type
+                if let Some(record_info) = self.lookup_record(&record_name) {
+                    if let Some(field_ty) = record_info.fields.get(&field.name) {
+                        field_ty.clone()
+                    } else {
+                        self.errors.push(CheckError::unknown_field(&field.name, span));
+                        Type::Error
+                    }
+                } else {
+                    // It's a Named type but not a record - could be enum
+                    self.errors.push(CheckError::field_access_on_non_record(
+                        obj_ty.to_string(),
+                        span,
+                    ));
+                    Type::Error
+                }
+            }
         }
     }
 
@@ -1789,6 +2433,90 @@ impl<'a> ModuleChecker<'a> {
                 } else {
                     self.errors.push(CheckError::invalid_unary_op("!", operand.to_string(), span));
                     Type::Error
+                }
+            }
+        }
+    }
+
+    fn check_pattern(&mut self, pattern: &Pattern, scrutinee_ty: &Type) {
+        match pattern {
+            Pattern::Wildcard { .. } => {
+                // Wildcard matches anything - no bindings introduced
+            }
+            Pattern::Binding { name, .. } => {
+                // Binding pattern introduces a variable with the scrutinee's type
+                self.define_var(&name.name, scrutinee_ty.clone());
+            }
+            Pattern::Variant { enum_name, variant, span } => {
+                // Check that the scrutinee is the correct enum type
+                let expected_enum = match scrutinee_ty {
+                    Type::Named(name) => Some(name.clone()),
+                    Type::Error => return, // Don't cascade errors
+                    _ => None,
+                };
+
+                if let Some(enum_name_str) = &enum_name {
+                    // Qualified variant: Status::Active
+                    if let Some(expected) = &expected_enum {
+                        if enum_name_str.name != *expected {
+                            self.errors.push(CheckError::type_mismatch(
+                                expected,
+                                &enum_name_str.name,
+                                span,
+                            ));
+                            return;
+                        }
+                    }
+
+                    // Check that the variant exists in the enum
+                    if let Some(enum_info) = self.lookup_enum(&enum_name_str.name) {
+                        if !enum_info.variants.contains(&variant.name) {
+                            self.errors.push(CheckError::undefined_enum_variant(
+                                &variant.name,
+                                &enum_name_str.name,
+                                span,
+                            ));
+                        }
+                    } else {
+                        self.errors.push(CheckError::undefined_type(&enum_name_str.name, span));
+                    }
+                } else {
+                    // Unqualified variant: just `Active`
+                    // Need to check against the scrutinee's enum type
+                    if let Some(ref enum_name_str) = expected_enum {
+                        if let Some(enum_info) = self.lookup_enum(enum_name_str) {
+                            if !enum_info.variants.contains(&variant.name) {
+                                self.errors.push(CheckError::undefined_enum_variant(
+                                    &variant.name,
+                                    enum_name_str,
+                                    span,
+                                ));
+                            }
+                        }
+                    } else if !scrutinee_ty.is_error() {
+                        self.errors.push(CheckError::type_mismatch(
+                            "enum type",
+                            scrutinee_ty.to_string(),
+                            span,
+                        ));
+                    }
+                }
+            }
+            Pattern::Literal { value, span } => {
+                // Check that the literal type matches the scrutinee type
+                let lit_ty = match value {
+                    Literal::Int(_) => Type::Int,
+                    Literal::Float(_) => Type::Float,
+                    Literal::Bool(_) => Type::Bool,
+                    Literal::String(_) => Type::String,
+                };
+
+                if !lit_ty.is_compatible_with(scrutinee_ty) && !scrutinee_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        scrutinee_ty.to_string(),
+                        lit_ty.to_string(),
+                        span,
+                    ));
                 }
             }
         }
@@ -1925,6 +2653,34 @@ impl<'a> ModuleChecker<'a> {
         self.symbols.iter_agents().map(|(_, agent)| agent).find(|&agent| agent.module_path == self.module_path && agent.name == name).map(|v| v as _)
     }
 
+    fn lookup_record(&self, name: &str) -> Option<&RecordInfo> {
+        // Check imports first
+        if let Some((module_path, original_name)) = self.imports.get(name) {
+            for (_, record) in self.symbols.iter_records() {
+                if &record.module_path == module_path && record.name == *original_name {
+                    return Some(record);
+                }
+            }
+        }
+
+        // Check local records
+        self.symbols.iter_records().map(|(_, record)| record).find(|&record| record.module_path == self.module_path && record.name == name).map(|v| v as _)
+    }
+
+    fn lookup_enum(&self, name: &str) -> Option<&EnumInfo> {
+        // Check imports first
+        if let Some((module_path, original_name)) = self.imports.get(name) {
+            for (_, enum_info) in self.symbols.iter_enums() {
+                if &enum_info.module_path == module_path && enum_info.name == *original_name {
+                    return Some(enum_info);
+                }
+            }
+        }
+
+        // Check local enums
+        self.symbols.iter_enums().map(|(_, enum_info)| enum_info).find(|&enum_info| enum_info.module_path == self.module_path && enum_info.name == name).map(|v| v as _)
+    }
+
     fn push_scope(&mut self) {
         self.scopes.push(Scope::new());
     }
@@ -1946,8 +2702,27 @@ impl<'a> ModuleChecker<'a> {
             }
         }
 
+        // Check if it's a constant
+        if let Some(const_info) = self.lookup_const(name) {
+            return const_info.ty.clone();
+        }
+
         self.errors.push(CheckError::undefined_variable(name, span));
         Type::Error
+    }
+
+    fn lookup_const(&self, name: &str) -> Option<&ConstInfo> {
+        // Check imports first
+        if let Some((module_path, original_name)) = self.imports.get(name) {
+            for (_, const_info) in self.symbols.iter_consts() {
+                if &const_info.module_path == module_path && const_info.name == *original_name {
+                    return Some(const_info);
+                }
+            }
+        }
+
+        // Check local consts
+        self.symbols.iter_consts().map(|(_, const_info)| const_info).find(|&const_info| const_info.module_path == self.module_path && const_info.name == name).map(|v| v as _)
     }
 }
 

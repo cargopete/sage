@@ -94,6 +94,18 @@ pub enum Token {
     #[token("super")]
     KwSuper,
 
+    #[token("record")]
+    KwRecord,
+
+    #[token("enum")]
+    KwEnum,
+
+    #[token("match")]
+    KwMatch,
+
+    #[token("const")]
+    KwConst,
+
     // =========================================================================
     // Type keywords
     // =========================================================================
@@ -183,6 +195,9 @@ pub enum Token {
     #[token("->")]
     Arrow,
 
+    #[token("=>")]
+    FatArrow,
+
     // =========================================================================
     // Operators
     // =========================================================================
@@ -271,6 +286,10 @@ impl Token {
                 | Token::KwPub
                 | Token::KwAs
                 | Token::KwSuper
+                | Token::KwRecord
+                | Token::KwEnum
+                | Token::KwMatch
+                | Token::KwConst
         )
     }
 
@@ -356,6 +375,10 @@ impl std::fmt::Display for Token {
             Token::KwPub => write!(f, "pub"),
             Token::KwAs => write!(f, "as"),
             Token::KwSuper => write!(f, "super"),
+            Token::KwRecord => write!(f, "record"),
+            Token::KwEnum => write!(f, "enum"),
+            Token::KwMatch => write!(f, "match"),
+            Token::KwConst => write!(f, "const"),
 
             // Type keywords
             Token::TyInt => write!(f, "Int"),
@@ -388,6 +411,7 @@ impl std::fmt::Display for Token {
             Token::Colon => write!(f, ":"),
             Token::Dot => write!(f, "."),
             Token::Arrow => write!(f, "->"),
+            Token::FatArrow => write!(f, "=>"),
 
             // Operators
             Token::Eq => write!(f, "="),
@@ -725,5 +749,93 @@ mod tests {
         assert_eq!(format!("{}", Token::Ident), "<ident>");
         assert_eq!(format!("{}", Token::LBrace), "{");
         assert_eq!(format!("{}", Token::PlusPlus), "++");
+    }
+
+    #[test]
+    fn lex_type_keywords_record_enum_match_const() {
+        let mut lexer = Token::lexer("record enum match const");
+        assert_eq!(lexer.next(), Some(Ok(Token::KwRecord)));
+        assert_eq!(lexer.next(), Some(Ok(Token::KwEnum)));
+        assert_eq!(lexer.next(), Some(Ok(Token::KwMatch)));
+        assert_eq!(lexer.next(), Some(Ok(Token::KwConst)));
+        assert_eq!(lexer.next(), None);
+    }
+
+    #[test]
+    fn lex_fat_arrow() {
+        let mut lexer = Token::lexer("=> -> =");
+        assert_eq!(lexer.next(), Some(Ok(Token::FatArrow)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Arrow)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Eq)));
+        assert_eq!(lexer.next(), None);
+    }
+
+    #[test]
+    fn lex_match_expression() {
+        let mut lexer = Token::lexer("match status { Active => 1, Inactive => 0 }");
+        assert_eq!(lexer.next(), Some(Ok(Token::KwMatch)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Ident))); // status
+        assert_eq!(lexer.next(), Some(Ok(Token::LBrace)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Ident))); // Active
+        assert_eq!(lexer.next(), Some(Ok(Token::FatArrow)));
+        assert_eq!(lexer.next(), Some(Ok(Token::IntLit))); // 1
+        assert_eq!(lexer.next(), Some(Ok(Token::Comma)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Ident))); // Inactive
+        assert_eq!(lexer.next(), Some(Ok(Token::FatArrow)));
+        assert_eq!(lexer.next(), Some(Ok(Token::IntLit))); // 0
+        assert_eq!(lexer.next(), Some(Ok(Token::RBrace)));
+        assert_eq!(lexer.next(), None);
+    }
+
+    #[test]
+    fn lex_record_declaration() {
+        let mut lexer = Token::lexer("record Point { x: Int, y: Int }");
+        assert_eq!(lexer.next(), Some(Ok(Token::KwRecord)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Ident))); // Point
+        assert_eq!(lexer.next(), Some(Ok(Token::LBrace)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Ident))); // x
+        assert_eq!(lexer.next(), Some(Ok(Token::Colon)));
+        assert_eq!(lexer.next(), Some(Ok(Token::TyInt)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Comma)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Ident))); // y
+        assert_eq!(lexer.next(), Some(Ok(Token::Colon)));
+        assert_eq!(lexer.next(), Some(Ok(Token::TyInt)));
+        assert_eq!(lexer.next(), Some(Ok(Token::RBrace)));
+        assert_eq!(lexer.next(), None);
+    }
+
+    #[test]
+    fn lex_enum_declaration() {
+        let mut lexer = Token::lexer("enum Status { Active, Pending, Done }");
+        assert_eq!(lexer.next(), Some(Ok(Token::KwEnum)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Ident))); // Status
+        assert_eq!(lexer.next(), Some(Ok(Token::LBrace)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Ident))); // Active
+        assert_eq!(lexer.next(), Some(Ok(Token::Comma)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Ident))); // Pending
+        assert_eq!(lexer.next(), Some(Ok(Token::Comma)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Ident))); // Done
+        assert_eq!(lexer.next(), Some(Ok(Token::RBrace)));
+        assert_eq!(lexer.next(), None);
+    }
+
+    #[test]
+    fn lex_const_declaration() {
+        let mut lexer = Token::lexer("const MAX_RETRIES: Int = 3");
+        assert_eq!(lexer.next(), Some(Ok(Token::KwConst)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Ident))); // MAX_RETRIES
+        assert_eq!(lexer.next(), Some(Ok(Token::Colon)));
+        assert_eq!(lexer.next(), Some(Ok(Token::TyInt)));
+        assert_eq!(lexer.next(), Some(Ok(Token::Eq)));
+        assert_eq!(lexer.next(), Some(Ok(Token::IntLit))); // 3
+        assert_eq!(lexer.next(), None);
+    }
+
+    #[test]
+    fn new_keywords_are_keywords() {
+        assert!(Token::KwRecord.is_keyword());
+        assert!(Token::KwEnum.is_keyword());
+        assert!(Token::KwMatch.is_keyword());
+        assert!(Token::KwConst.is_keyword());
     }
 }

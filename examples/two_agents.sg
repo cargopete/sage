@@ -1,9 +1,9 @@
-// Demonstrates agent spawning, beliefs, and await
+// Demonstrates agent spawning, state fields, and await
 // Two workers compute values that are combined by the main agent
 
 agent Worker {
-    belief value: Int
-    belief multiplier: Int
+    value: Int
+    multiplier: Int
 
     on start {
         let result = self.value * self.multiplier;
@@ -13,7 +13,7 @@ agent Worker {
 
 agent Main {
     on start {
-        // Spawn two workers with different beliefs
+        // Spawn two workers with different field values
         let w1 = spawn Worker { value: 10, multiplier: 2 };
         let w2 = spawn Worker { value: 7, multiplier: 3 };
 

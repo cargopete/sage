@@ -26,6 +26,8 @@ pub enum Type {
     Inferred(Box<Type>),
     /// Handle to a running agent.
     Agent(String),
+    /// User-defined type (record or enum) by name.
+    Named(String),
     /// An error type used when type checking fails.
     /// Propagates through expressions to avoid cascading errors.
     Error,
@@ -105,6 +107,7 @@ impl fmt::Display for Type {
             Type::Option(inner) => write!(f, "Option<{inner}>"),
             Type::Inferred(inner) => write!(f, "Inferred<{inner}>"),
             Type::Agent(name) => write!(f, "Agent<{name}>"),
+            Type::Named(name) => write!(f, "{name}"),
             Type::Error => write!(f, "<error>"),
         }
     }

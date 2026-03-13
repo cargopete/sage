@@ -209,6 +209,65 @@ pub enum CheckError {
     },
 
     // =========================================================================
+    // User-defined type errors
+    // =========================================================================
+    #[error("undefined type `{name}`")]
+    #[diagnostic(code(sage::undefined_type))]
+    UndefinedType {
+        name: String,
+        #[label("no record or enum with this name")]
+        span: SourceSpan,
+    },
+
+    #[error("missing field `{field}` in record `{record}`")]
+    #[diagnostic(code(sage::missing_field))]
+    MissingField {
+        field: String,
+        record: String,
+        #[label("record construction incomplete")]
+        span: SourceSpan,
+    },
+
+    #[error("cannot access field on type `{ty}`")]
+    #[diagnostic(
+        code(sage::field_access_on_non_record),
+        help("field access is only valid on record types")
+    )]
+    FieldAccessOnNonRecord {
+        ty: String,
+        #[label("not a record type")]
+        span: SourceSpan,
+    },
+
+    #[error("undefined field `{field}` in record `{record}`")]
+    #[diagnostic(code(sage::undefined_record_field))]
+    UndefinedRecordField {
+        field: String,
+        record: String,
+        #[label("record has no field with this name")]
+        span: SourceSpan,
+    },
+
+    #[error("undefined variant `{variant}` in enum `{enum_name}`")]
+    #[diagnostic(code(sage::undefined_enum_variant))]
+    UndefinedEnumVariant {
+        variant: String,
+        enum_name: String,
+        #[label("enum has no variant with this name")]
+        span: SourceSpan,
+    },
+
+    #[error("non-exhaustive match: missing patterns")]
+    #[diagnostic(
+        code(sage::non_exhaustive_match),
+        help("add a wildcard `_` pattern or cover all variants")
+    )]
+    NonExhaustiveMatch {
+        #[label("match is not exhaustive")]
+        span: SourceSpan,
+    },
+
+    // =========================================================================
     // Warnings
     // =========================================================================
     #[error("unused belief `{name}`")]
@@ -453,6 +512,69 @@ impl CheckError {
         Self::ItemNotFound {
             name: name.into(),
             module: module.into(),
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create an undefined type error.
+    pub fn undefined_type(name: impl Into<String>, span: &Span) -> Self {
+        Self::UndefinedType {
+            name: name.into(),
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create a missing field error.
+    pub fn missing_field(
+        field: impl Into<String>,
+        record: impl Into<String>,
+        span: &Span,
+    ) -> Self {
+        Self::MissingField {
+            field: field.into(),
+            record: record.into(),
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create a field-access-on-non-record error.
+    pub fn field_access_on_non_record(ty: impl Into<String>, span: &Span) -> Self {
+        Self::FieldAccessOnNonRecord {
+            ty: ty.into(),
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create an undefined record field error.
+    pub fn undefined_record_field(
+        field: impl Into<String>,
+        record: impl Into<String>,
+        span: &Span,
+    ) -> Self {
+        Self::UndefinedRecordField {
+            field: field.into(),
+            record: record.into(),
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create an undefined enum variant error.
+    pub fn undefined_enum_variant(
+        variant: impl Into<String>,
+        enum_name: impl Into<String>,
+        span: &Span,
+    ) -> Self {
+        Self::UndefinedEnumVariant {
+            variant: variant.into(),
+            enum_name: enum_name.into(),
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create a non-exhaustive match error.
+    #[must_use]
+    pub fn non_exhaustive_match(span: &Span) -> Self {
+        Self::NonExhaustiveMatch {
             span: to_source_span(span),
         }
     }

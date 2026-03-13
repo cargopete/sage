@@ -17,6 +17,12 @@ pub struct Program {
     pub mod_decls: Vec<ModDecl>,
     /// Use declarations (`use foo::Bar`).
     pub use_decls: Vec<UseDecl>,
+    /// Record type declarations.
+    pub records: Vec<RecordDecl>,
+    /// Enum type declarations.
+    pub enums: Vec<EnumDecl>,
+    /// Constant declarations.
+    pub consts: Vec<ConstDecl>,
     /// Agent declarations.
     pub agents: Vec<AgentDecl>,
     /// Function declarations.
@@ -67,6 +73,62 @@ pub enum UseKind {
     /// Group import: `use a::{B, C as D}`
     /// Each tuple is (name, optional alias).
     Group(Vec<(Ident, Option<Ident>)>),
+}
+
+// =============================================================================
+// Type declarations (records, enums)
+// =============================================================================
+
+/// A record declaration: `record Point { x: Int, y: Int }`
+#[derive(Debug, Clone, PartialEq)]
+pub struct RecordDecl {
+    /// Whether this record is public.
+    pub is_pub: bool,
+    /// The record's name.
+    pub name: Ident,
+    /// The record's fields.
+    pub fields: Vec<RecordField>,
+    /// Span covering the declaration.
+    pub span: Span,
+}
+
+/// A field in a record declaration: `name: Type`
+#[derive(Debug, Clone, PartialEq)]
+pub struct RecordField {
+    /// The field's name.
+    pub name: Ident,
+    /// The field's type.
+    pub ty: TypeExpr,
+    /// Span covering the field.
+    pub span: Span,
+}
+
+/// An enum declaration: `enum Status { Active, Pending, Done }`
+#[derive(Debug, Clone, PartialEq)]
+pub struct EnumDecl {
+    /// Whether this enum is public.
+    pub is_pub: bool,
+    /// The enum's name.
+    pub name: Ident,
+    /// The enum's variants.
+    pub variants: Vec<Ident>,
+    /// Span covering the declaration.
+    pub span: Span,
+}
+
+/// A const declaration: `const MAX_RETRIES: Int = 3`
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConstDecl {
+    /// Whether this const is public.
+    pub is_pub: bool,
+    /// The constant's name.
+    pub name: Ident,
+    /// The constant's type.
+    pub ty: TypeExpr,
+    /// The constant's value.
+    pub value: Expr,
+    /// Span covering the declaration.
+    pub span: Span,
 }
 
 // =============================================================================
@@ -429,6 +491,36 @@ pub enum Expr {
         /// Span covering the expression.
         span: Span,
     },
+
+    /// Match expression: `match expr { Pattern => expr, ... }`
+    Match {
+        /// The scrutinee expression.
+        scrutinee: Box<Expr>,
+        /// The match arms.
+        arms: Vec<MatchArm>,
+        /// Span covering the expression.
+        span: Span,
+    },
+
+    /// Record construction: `Point { x: 1, y: 2 }`
+    RecordConstruct {
+        /// The record type name.
+        name: Ident,
+        /// Field initializations.
+        fields: Vec<FieldInit>,
+        /// Span covering the expression.
+        span: Span,
+    },
+
+    /// Field access: `record.field`
+    FieldAccess {
+        /// The record expression.
+        object: Box<Expr>,
+        /// The field name.
+        field: Ident,
+        /// Span covering the expression.
+        span: Span,
+    },
 }
 
 impl Expr {
@@ -450,20 +542,80 @@ impl Expr {
             | Expr::Literal { span, .. }
             | Expr::Var { span, .. }
             | Expr::Paren { span, .. }
-            | Expr::StringInterp { span, .. } => span,
+            | Expr::StringInterp { span, .. }
+            | Expr::Match { span, .. }
+            | Expr::RecordConstruct { span, .. }
+            | Expr::FieldAccess { span, .. } => span,
         }
     }
 }
 
-/// A field initialization in a spawn expression: `field: value`
+/// A field initialization in a spawn or record construction expression: `field: value`
 #[derive(Debug, Clone, PartialEq)]
 pub struct FieldInit {
-    /// The field (belief) name.
+    /// The field name.
     pub name: Ident,
     /// The initial value.
     pub value: Expr,
     /// Span covering the field initialization.
     pub span: Span,
+}
+
+/// A match arm: `Pattern => expr`
+#[derive(Debug, Clone, PartialEq)]
+pub struct MatchArm {
+    /// The pattern to match.
+    pub pattern: Pattern,
+    /// The expression to evaluate if the pattern matches.
+    pub body: Expr,
+    /// Span covering the arm.
+    pub span: Span,
+}
+
+/// A pattern in a match expression.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Pattern {
+    /// Wildcard pattern: `_`
+    Wildcard {
+        /// Span covering the pattern.
+        span: Span,
+    },
+    /// Enum variant pattern: `Status::Active` or just `Active`
+    Variant {
+        /// Optional enum type name (for qualified patterns).
+        enum_name: Option<Ident>,
+        /// The variant name.
+        variant: Ident,
+        /// Span covering the pattern.
+        span: Span,
+    },
+    /// Literal pattern: `42`, `"hello"`, `true`
+    Literal {
+        /// The literal value.
+        value: Literal,
+        /// Span covering the pattern.
+        span: Span,
+    },
+    /// Binding pattern: `x` (binds the matched value to a variable)
+    Binding {
+        /// The variable name.
+        name: Ident,
+        /// Span covering the pattern.
+        span: Span,
+    },
+}
+
+impl Pattern {
+    /// Get the span of this pattern.
+    #[must_use]
+    pub fn span(&self) -> &Span {
+        match self {
+            Pattern::Wildcard { span }
+            | Pattern::Variant { span, .. }
+            | Pattern::Literal { span, .. }
+            | Pattern::Binding { span, .. } => span,
+        }
+    }
 }
 
 // =============================================================================
