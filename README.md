@@ -197,6 +197,12 @@ for item in [1, 2, 3] {
     print(str(item));
 }
 
+// Iterate over maps with tuple destructuring
+let scores = {"alice": 100, "bob": 85};
+for (name, score) in scores {
+    print(name ++ ": " ++ str(score));
+}
+
 while count < 10 {
     count = count + 1;
 }
@@ -261,6 +267,10 @@ The `receives` clause declares the message type an agent accepts. `receive()` bl
 | `String` | Text strings |
 | `Unit` | No value (like Rust's `()`) |
 | `List<T>` | Lists, e.g., `[1, 2, 3]` |
+| `Map<K, V>` | Key-value maps, e.g., `{"a": 1, "b": 2}` |
+| `(A, B, C)` | Tuples, e.g., `(1, "hello", true)` |
+| `Option<T>` | Optional values (`Some(x)` or `None`) |
+| `Result<T, E>` | Success or error (`Ok(x)` or `Err(e)`) |
 | `Inferred<T>` | LLM inference results |
 | `Fn(A, B) -> C` | Function types |
 
@@ -280,6 +290,12 @@ enum Status {
     Pending,
 }
 
+// Enums can carry payloads
+enum Result {
+    Ok(Int),
+    Err(String),
+}
+
 const MAX_RETRIES: Int = 3;
 ```
 
@@ -288,6 +304,10 @@ Construct records and access fields:
 ```sage
 let p = Point { x: 10, y: 20 };
 let sum = p.x + p.y;
+
+// Construct enum variants with payloads
+let success = Result::Ok(42);
+let failure = Result::Err("not found");
 ```
 
 ### Match Expressions
@@ -310,6 +330,14 @@ fn classify(n: Int) -> String {
         _ => "many",
     };
 }
+
+// Pattern matching with payload binding
+fn unwrap_result(r: Result) -> String {
+    return match r {
+        Ok(value) => str(value),
+        Err(msg) => msg,
+    };
+}
 ```
 
 ### Expressions
@@ -322,16 +350,47 @@ fn classify(n: Int) -> String {
 | `++` | String concatenation |
 | `"Hello, {name}!"` | String interpolation |
 
+### Maps & Tuples
+
+Maps are key-value collections:
+
+```sage
+let ages = {"alice": 30, "bob": 25};
+let alice_age = map_get(ages, "alice");  // Option<Int>
+
+map_set(ages, "charlie", 35);
+let has_bob = map_has(ages, "bob");      // true
+let keys = map_keys(ages);               // List<String>
+```
+
+Tuples are fixed-size heterogeneous collections:
+
+```sage
+let pair = (42, "hello");
+let first = pair.0;   // 42
+let second = pair.1;  // "hello"
+
+// Tuple destructuring
+let (x, y) = pair;
+```
+
 ### Built-in Functions
 
 | Function | Description |
 |----------|-------------|
 | `print(msg)` | Output to console |
 | `str(value)` | Convert any type to string |
-| `len(list)` | Get list length |
+| `len(list)` | Get list or map length |
+| `push(list, item)` | Add item to list |
 | `infer(prompt)` | LLM inference |
 | `receive()` | Receive message from mailbox (agents only) |
 | `send(handle, msg)` | Send message to agent |
+| `map_get(map, key)` | Get value from map (returns `Option<V>`) |
+| `map_set(map, key, value)` | Set key-value in map |
+| `map_has(map, key)` | Check if key exists |
+| `map_delete(map, key)` | Remove key from map |
+| `map_keys(map)` | Get all keys as list |
+| `map_values(map)` | Get all values as list |
 
 ### Semicolons
 
@@ -480,6 +539,8 @@ sage/
 │   ├── RFC-0005-*.md      # User-defined types
 │   ├── RFC-0006-*.md      # Agent message passing
 │   ├── RFC-0007-*.md      # Error handling
+│   ├── RFC-0009-*.md      # First-class functions
+│   ├── RFC-0010-*.md      # Maps, tuples, enum payloads
 │   └── VISION.md          # Roadmap and future direction
 ├── tests/
 │   └── docker/            # Installation verification tests
