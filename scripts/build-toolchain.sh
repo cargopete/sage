@@ -7,6 +7,7 @@ TARGET=$(rustc -vV | grep host | cut -d' ' -f2)
 DIST_DIR="dist/$TARGET"
 
 echo "Building toolchain for $TARGET..."
+echo "Rust version: $(rustc --version)"
 
 # Clean and create output directory
 rm -rf "$DIST_DIR"
@@ -35,20 +36,24 @@ rm -f "$CARGO_OUTPUT"
 LIB_COUNT=$(ls "$DIST_DIR/libs" 2>/dev/null | wc -l | tr -d ' ')
 echo "  Copied $LIB_COUNT libraries from cargo build"
 
-# Copy Rust sysroot libs (std, core, alloc, etc.)
+# Copy entire rustlib directory for target (includes all needed files)
 SYSROOT=$(rustc --print sysroot)
-SYSROOT_LIBS="$SYSROOT/lib/rustlib/$TARGET/lib"
+SYSROOT_TARGET="$SYSROOT/lib/rustlib/$TARGET"
 
-if [ -d "$SYSROOT_LIBS" ]; then
-    echo "Copying sysroot libraries..."
-    for lib in "$SYSROOT_LIBS"/lib*.rlib "$SYSROOT_LIBS"/lib*.a; do
-        if [ -f "$lib" ]; then
-            cp "$lib" "$DIST_DIR/libs/"
-            echo "  Copied $(basename "$lib")"
-        fi
-    done
+if [ -d "$SYSROOT_TARGET" ]; then
+    echo "Copying sysroot for $TARGET..."
+    mkdir -p "$DIST_DIR/lib/rustlib"
+    cp -R "$SYSROOT_TARGET" "$DIST_DIR/lib/rustlib/"
+
+    # Merge our compiled libs into the sysroot
+    cp "$DIST_DIR/libs/"* "$DIST_DIR/lib/rustlib/$TARGET/lib/" 2>/dev/null || true
+
+    # Show what we copied
+    SYSROOT_COUNT=$(find "$DIST_DIR/lib/rustlib/$TARGET/lib" -type f | wc -l | tr -d ' ')
+    echo "  Sysroot contains $SYSROOT_COUNT files"
 else
-    echo "Warning: Sysroot libraries not found at $SYSROOT_LIBS"
+    echo "ERROR: Sysroot not found at $SYSROOT_TARGET"
+    exit 1
 fi
 
 # Copy rustc binary
@@ -57,20 +62,13 @@ mkdir -p "$DIST_DIR/bin"
 cp "$RUSTC_PATH" "$DIST_DIR/bin/rustc"
 echo "Copied rustc"
 
-# Copy required shared libraries for rustc
+# Copy required shared libraries for rustc (the entire lib directory)
 RUSTC_DIR=$(dirname "$RUSTC_PATH")
 if [ -d "$RUSTC_DIR/../lib" ]; then
-    mkdir -p "$DIST_DIR/lib"
+    # Merge with existing lib directory (don't overwrite rustlib)
     cp -R "$RUSTC_DIR/../lib/"* "$DIST_DIR/lib/" 2>/dev/null || true
-    echo "Copied rustc libraries"
+    echo "Copied rustc shared libraries"
 fi
-
-# Set up sysroot structure for bundled rustc
-# rustc expects: $SYSROOT/lib/rustlib/$TARGET/lib/*.rlib
-SYSROOT_TARGET="$DIST_DIR/lib/rustlib/$TARGET/lib"
-mkdir -p "$SYSROOT_TARGET"
-cp "$DIST_DIR/libs/"* "$SYSROOT_TARGET/" 2>/dev/null || true
-echo "Set up sysroot structure"
 
 # Create manifest
 echo "Creating manifest..."
@@ -87,3 +85,6 @@ EOF
 SIZE=$(du -sh "$DIST_DIR" | cut -f1)
 echo ""
 echo "Done! Toolchain built in $DIST_DIR ($SIZE)"
+echo ""
+echo "Contents:"
+ls -la "$DIST_DIR/"
