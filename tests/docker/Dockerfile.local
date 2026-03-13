@@ -1,0 +1,63 @@
+# Dockerfile for testing Sage with a locally-built release tarball
+# Use this before publishing to GitHub to verify the tarball works
+#
+# Prerequisites:
+#   1. Build the release: cargo build --release
+#   2. Create tarball: ./scripts/build-release-tarball.sh
+#   3. Copy tarball to project root
+#
+# Usage:
+#   docker build -f tests/docker/Dockerfile.local \
+#     --build-arg TARBALL=sage-v0.1.0-x86_64-unknown-linux-gnu.tar.gz \
+#     -t sage-test-local .
+#   docker run --rm sage-test-local
+
+# Supports both x86_64 and ARM64
+FROM ubuntu:22.04
+
+ARG TARBALL
+
+# Minimal dependencies - explicitly NO Rust
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    ca-certificates \
+    sudo \
+    && rm -rf /var/lib/apt/lists/*
+
+# Verify Rust is NOT installed
+RUN ! command -v rustc && ! command -v cargo && echo "✓ Confirmed: No Rust installed"
+
+# Create test user
+RUN useradd -m -s /bin/bash tester && echo "tester ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+
+# Copy and extract tarball
+COPY ${TARBALL} /tmp/sage.tar.gz
+RUN mkdir -p /tmp/sage-extract && \
+    tar xzf /tmp/sage.tar.gz -C /tmp/sage-extract && \
+    mv /tmp/sage-extract/* /usr/local/sage && \
+    ln -sf /usr/local/sage/bin/sage /usr/local/bin/sage && \
+    rm -rf /tmp/sage.tar.gz /tmp/sage-extract
+
+USER tester
+WORKDIR /home/tester
+
+# Set up toolchain path
+ENV SAGE_TOOLCHAIN=/usr/local/sage/toolchain
+
+# Create a test program
+RUN mkdir -p ~/test && echo '\
+agent Main { \
+    on start { \
+        let x = 1 + 2; \
+        let msg = "Hello from Sage! 1 + 2 = " ++ str(x); \
+        print(msg); \
+        emit(x); \
+    } \
+} \
+run Main;' > ~/test/simple.sg
+
+# Copy test script
+COPY --chown=tester:tester tests/docker/test-sage.sh /home/tester/test-sage.sh
+RUN chmod +x /home/tester/test-sage.sh
+
+CMD ["/home/tester/test-sage.sh"]

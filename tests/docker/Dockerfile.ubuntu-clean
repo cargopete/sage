@@ -1,0 +1,55 @@
+# Dockerfile for testing Sage installation on a clean Ubuntu system
+# Verifies the install script works without Rust installed
+#
+# Usage (test published release):
+#   docker build -f tests/docker/Dockerfile.ubuntu-clean -t sage-test-ubuntu .
+#   docker run --rm sage-test-ubuntu
+#
+# Usage (test specific version):
+#   docker build -f tests/docker/Dockerfile.ubuntu-clean \
+#     --build-arg SAGE_VERSION=v0.1.0 -t sage-test-ubuntu .
+
+# Supports both x86_64 and ARM64 (v0.2.0+)
+FROM ubuntu:22.04
+
+ARG SAGE_VERSION=""
+
+# Minimal dependencies - explicitly NO Rust
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    ca-certificates \
+    sudo \
+    && rm -rf /var/lib/apt/lists/*
+
+# Verify Rust is NOT installed
+RUN ! command -v rustc && ! command -v cargo && echo "✓ Confirmed: No Rust installed"
+
+# Create test user (install script uses sudo)
+RUN useradd -m -s /bin/bash tester && echo "tester ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+USER tester
+WORKDIR /home/tester
+
+# Install Sage from GitHub releases
+ENV SAGE_VERSION=${SAGE_VERSION}
+RUN curl -fsSL https://raw.githubusercontent.com/cargopete/sage/main/scripts/install.sh | bash
+
+# Set up toolchain path
+ENV SAGE_TOOLCHAIN=/usr/local/sage/toolchain
+
+# Create a test program that doesn't need LLM
+RUN mkdir -p ~/test && echo '\
+agent Main { \
+    on start { \
+        let x = 1 + 2; \
+        let msg = "Hello from Sage! 1 + 2 = " ++ str(x); \
+        print(msg); \
+        emit(x); \
+    } \
+} \
+run Main;' > ~/test/simple.sg
+
+# Copy test script
+COPY --chown=tester:tester tests/docker/test-sage.sh /home/tester/test-sage.sh
+RUN chmod +x /home/tester/test-sage.sh
+
+CMD ["/home/tester/test-sage.sh"]

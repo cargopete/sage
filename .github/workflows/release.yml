@@ -17,10 +17,11 @@ jobs:
       matrix:
         include:
           - target: aarch64-apple-darwin
-            os: macos-latest  # ARM runner
+            os: macos-latest
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-        # Note: x86_64-apple-darwin dropped - Intel Macs can use Rosetta
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
@@ -35,6 +36,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu
+          mkdir -p ~/.cargo
+          cat >> ~/.cargo/config.toml << EOF
+          [target.aarch64-unknown-linux-gnu]
+          linker = "aarch64-linux-gnu-gcc"
+          EOF
 
       - name: Build sage CLI
         run: |
@@ -88,28 +94,16 @@ jobs:
           body: |
             ## Installation
 
-            ### macOS (Apple Silicon)
             ```bash
-            curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/sage-${{ github.ref_name }}-aarch64-apple-darwin.tar.gz | tar xz
-            sudo mv sage-${{ github.ref_name }}-aarch64-apple-darwin /usr/local/sage
-            sudo ln -sf /usr/local/sage/bin/sage /usr/local/bin/sage
-            export SAGE_TOOLCHAIN=/usr/local/sage/toolchain
+            curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/scripts/install.sh | bash
             ```
 
-            ### macOS (Intel)
-            ```bash
-            curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/sage-${{ github.ref_name }}-x86_64-apple-darwin.tar.gz | tar xz
-            sudo mv sage-${{ github.ref_name }}-x86_64-apple-darwin /usr/local/sage
-            sudo ln -sf /usr/local/sage/bin/sage /usr/local/bin/sage
-            export SAGE_TOOLCHAIN=/usr/local/sage/toolchain
-            ```
+            Or download manually for your platform:
 
-            ### Linux (x86_64)
-            ```bash
-            curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/sage-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz | tar xz
-            sudo mv sage-${{ github.ref_name }}-x86_64-unknown-linux-gnu /usr/local/sage
-            sudo ln -sf /usr/local/sage/bin/sage /usr/local/bin/sage
-            export SAGE_TOOLCHAIN=/usr/local/sage/toolchain
-            ```
+            | Platform | Download |
+            |----------|----------|
+            | macOS (Apple Silicon) | `sage-${{ github.ref_name }}-aarch64-apple-darwin.tar.gz` |
+            | Linux (x86_64) | `sage-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz` |
+            | Linux (ARM64) | `sage-${{ github.ref_name }}-aarch64-unknown-linux-gnu.tar.gz` |
 
             Add `export SAGE_TOOLCHAIN=/usr/local/sage/toolchain` to your shell profile for fast builds.

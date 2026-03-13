@@ -13,7 +13,8 @@
   <a href="#installation">Install</a> •
   <a href="#language-syntax">Syntax</a> •
   <a href="#usage">Usage</a> •
-  <a href="docs/RFC-0001-poc.md">Specification</a>
+  <a href="docs/RFC-0001-poc.md">Specification</a> •
+  <a href="docs/VISION.md">Roadmap</a>
 </p>
 
 ---
@@ -53,16 +54,16 @@ run Coordinator;
 
 ## Status
 
-**v0.1.0 released** — POC complete. Compiles to native binaries via Rust.
+**v0.1.0 released** — Compiles to native binaries via Rust. No Rust installation required.
 
 | | |
 |---|---|
 | **Latest** | [v0.1.0](https://github.com/cargopete/sage/releases/tag/v0.1.0) |
 | **Extension** | `.sg` |
-| **Platforms** | macOS (ARM), Linux (x86_64) |
+| **Platforms** | macOS (ARM), Linux (x86_64, ARM) |
 | **Build time** | ~0.4s |
 
-See [docs/RFC-0001-poc.md](docs/RFC-0001-poc.md) for the full specification.
+See [docs/RFC-0001-poc.md](docs/RFC-0001-poc.md) for the language specification.
 
 ## Language Syntax
 
@@ -222,59 +223,24 @@ sage check examples/hello.sg
 | `SAGE_MODEL` | Model to use | `gpt-4o-mini` |
 | `SAGE_TOOLCHAIN` | Path to pre-compiled toolchain | Auto-detected |
 
-## Implementation Progress
+## Architecture
 
-### Milestone 1: Project Scaffolding
-- [x] **TASK-001** — Initialize Cargo workspace
-- [x] **TASK-002** — Set up CI (GitHub Actions)
-- [x] **TASK-003** — Define shared types crate (`sage-types`)
+Sage follows a traditional multi-pass compiler architecture:
 
-### Milestone 2: Lexer
-- [x] **TASK-004** — Define Token enum
-- [x] **TASK-005** — Implement lexer public API
-- [x] **TASK-006** — Lexer tests *(comprehensive coverage included in TASK-004/005)*
+```
+Source (.sg) → Lexer → Parser → Type Checker → Rust Codegen → Native Binary
+```
 
-### Milestone 3: Parser
-- [x] **TASK-007** — Define AST types
-- [x] **TASK-008** — Parser: top-level structure
-- [x] **TASK-009** — Parser: agent declarations
-- [x] **TASK-010** — Parser: statements
-- [x] **TASK-011** — Parser: expressions
-- [x] **TASK-012** — Parser: function declarations
-- [x] **TASK-013** — Parser error recovery
-- [x] **TASK-014** — Parser tests
+The compiler is written in ~7,600 lines of Rust, organised into focused crates:
 
-### Milestone 4: Name Resolution + Type Checker
-- [x] **TASK-015** — Name resolver
-- [x] **TASK-016** — Type environment
-- [x] **TASK-017** — Type checker: agents
-- [x] **TASK-018** — Type checker: expressions
-- [x] **TASK-019** — Type checker: statements
-- [x] **TASK-020** — Type checker: functions
-- [x] **TASK-021** — Entry agent validation
-- [x] **TASK-022** — Type checker tests
-
-### Milestone 5: Compiler & Runtime
-- [x] **TASK-023** — Rust code generator (sage-codegen)
-- [x] **TASK-024** — Runtime library (sage-runtime)
-- [x] **TASK-025** — Agent spawning and async execution
-- [x] **TASK-026** — LLM backend integration
-- [x] **TASK-027** — Pre-compiled toolchain support
-
-### Milestone 6: CLI
-- [x] **TASK-034** — CLI binary with clap
-- [x] **TASK-035** — Release binary and README
-
-### Milestone 7: Examples and Demo
-- [x] **TASK-036** — hello.sg
-- [x] **TASK-037** — infer.sg
-- [x] **TASK-038** — two_agents.sg
-- [x] **TASK-039** — research.sg (full demo)
-
-### Milestone 8: Polish
-- [x] **TASK-040** — Error message polish
-- [x] **TASK-041** — Compiler warning for unused beliefs
-- [x] **TASK-042** — CONTRIBUTING.md and issue templates
+| Crate | Purpose |
+|-------|---------|
+| `sage-lexer` | Tokenizer (logos-based) |
+| `sage-parser` | Parser (chumsky-based) |
+| `sage-checker` | Name resolution + type checker |
+| `sage-codegen` | Rust code generator |
+| `sage-runtime` | Async runtime, LLM integration |
+| `sage-cli` | Command-line interface |
 
 ## Project Structure
 
@@ -291,7 +257,10 @@ sage/
 ├── scripts/
 │   └── build-toolchain.sh # Build pre-compiled runtime
 ├── docs/
-│   └── RFC-0001-poc.md    # Full language specification
+│   ├── RFC-0001-poc.md    # Language specification
+│   └── VISION.md          # Roadmap and future direction
+├── tests/
+│   └── docker/            # Installation verification tests
 ├── assets/
 │   └── ward.png           # Ward the Owl mascot
 └── examples/              # Example .sg programs
