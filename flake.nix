@@ -47,7 +47,7 @@
           ];
 
           # Build only the CLI
-          cargoBuildFlags = [ "-p" "sage-cli" ];
+          cargoBuildFlags = [ "-p" "sage-lang" ];
 
           meta = with pkgs.lib; {
             description = "A programming language where agents are first-class citizens";

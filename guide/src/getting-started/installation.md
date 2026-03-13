@@ -47,7 +47,7 @@ export SAGE_TOOLCHAIN=/usr/local/sage/toolchain
 ### Cargo (if you have Rust)
 
 ```bash
-cargo install sage-cli
+cargo install sage-lang
 ```
 
 ### Nix

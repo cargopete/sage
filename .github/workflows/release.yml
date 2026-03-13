@@ -33,7 +33,7 @@ jobs:
 
       - name: Build sage CLI
         run: |
-          cargo build --release --target ${{ matrix.target }} -p sage-cli
+          cargo build --release --target ${{ matrix.target }} -p sage-lang
 
       - name: Build toolchain
         run: |

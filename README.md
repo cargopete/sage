@@ -194,7 +194,7 @@ brew install cargopete/sage/sage
 ### Cargo (if you have Rust)
 
 ```bash
-cargo install sage-cli
+cargo install sage-lang
 ```
 
 ### Nix
@@ -265,7 +265,7 @@ The compiler is written in ~7,600 lines of Rust, organised into focused crates:
 | `sage-checker` | Name resolution + type checker |
 | `sage-codegen` | Rust code generator |
 | `sage-runtime` | Async runtime, LLM integration |
-| `sage-cli` | Command-line interface |
+| `sage-lang` | Command-line interface |
 
 ## Project Structure
 
