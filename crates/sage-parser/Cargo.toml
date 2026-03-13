@@ -4,10 +4,11 @@ description = "Parser for the Sage language"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 
 [dependencies]
-sage-lexer = { path = "../sage-lexer" }
-sage-types = { path = "../sage-types" }
+sage-lexer = { path = "../sage-lexer", version = "0.1.0" }
+sage-types = { path = "../sage-types", version = "0.1.0" }
 chumsky = "0.9"
 
 [dev-dependencies]
