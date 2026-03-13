@@ -64,11 +64,11 @@ run Coordinator;
 
 ## Status
 
-**v0.3.0 released** — First-class functions, closures, and package management.
+**v0.4.0 released** — Error handling enforcement, `sage new` scaffolding.
 
 | | |
 |---|---|
-| **Latest** | [v0.3.0](https://github.com/sagelang/sage/releases/tag/v0.3.0) |
+| **Latest** | [v0.4.0](https://github.com/sagelang/sage/releases/tag/v0.4.0) |
 | **Extension** | `.sg` |
 | **Platforms** | macOS (ARM), Linux (x86_64, ARM) |
 | **Build time** | ~0.5s |
