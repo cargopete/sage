@@ -151,7 +151,7 @@ agent Main {
 run Main;
 ```
 
-**Visibility:** Items are private by default. Use `pub` to export agents and functions.
+**Visibility:** Items are private by default. Use `pub` to export agents, functions, records, enums, and constants.
 
 **Import styles:**
 ```sage
@@ -190,6 +190,54 @@ while count < 10 {
 | `Unit` | No value (like Rust's `()`) |
 | `List<T>` | Lists, e.g., `[1, 2, 3]` |
 | `Inferred<T>` | LLM inference results |
+
+### Records & Enums
+
+Define custom data types:
+
+```sage
+record Point {
+    x: Int,
+    y: Int,
+}
+
+enum Status {
+    Active,
+    Inactive,
+    Pending,
+}
+
+const MAX_RETRIES: Int = 3;
+```
+
+Construct records and access fields:
+
+```sage
+let p = Point { x: 10, y: 20 };
+let sum = p.x + p.y;
+```
+
+### Match Expressions
+
+Pattern matching with exhaustiveness checking:
+
+```sage
+fn describe(s: Status) -> String {
+    return match s {
+        Active => "running",
+        Inactive => "stopped",
+        Pending => "waiting",
+    };
+}
+
+fn classify(n: Int) -> String {
+    return match n {
+        0 => "zero",
+        1 => "one",
+        _ => "many",
+    };
+}
+```
 
 ### Expressions
 
