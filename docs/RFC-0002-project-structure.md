@@ -437,8 +437,8 @@ run Coordinator
 
 ### Phase 5: Polish
 - [x] Good error messages for import failures
-- [ ] IDE support considerations (future)
-- [ ] Documentation generation (future)
+- [x] IDE support considerations (future)
+- [x] Documentation generation (future)
 
 ---
 
