@@ -128,7 +128,10 @@ It's a domain-specific language for AI agent systems. That's a narrow but potent
 1. **Should Sage compile to something else?** (WASM, Python, etc.) for ecosystem access
 2. **How should tools be typed?** Static tool definitions vs dynamic discovery
 3. **What's the debugging story?** Agent systems are notoriously hard to debug
-4. **How do we handle agent failures?** Supervision, retry, compensation?
+
+## Resolved Questions
+
+- **How do we handle agent failures?** ✓ Implemented via `try`/`catch`/`on error` (RFC-0007)
 
 ---
 
