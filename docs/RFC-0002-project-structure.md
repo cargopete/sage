@@ -1,7 +1,8 @@
 # RFC-0002: Multi-File Project Structure
 
-- **Status:** Draft
+- **Status:** Implemented
 - **Created:** 2026-03-11
+- **Updated:** 2026-03-13
 - **Author:** Sage Contributors
 
 ## Summary
@@ -413,29 +414,29 @@ run Coordinator
 
 ## 8. Implementation Plan
 
-### Phase 1: Module Parsing
-- [ ] Parse `mod` declarations
-- [ ] Parse `use` statements
-- [ ] Build module tree from file system
+### Phase 1: Module Parsing ✓
+- [x] Parse `mod` declarations
+- [x] Parse `use` statements
+- [x] Build module tree from file system
 
-### Phase 2: Name Resolution
-- [ ] Resolve imports across modules
-- [ ] Detect circular dependencies
-- [ ] Handle visibility (`pub`)
+### Phase 2: Name Resolution ✓
+- [x] Resolve imports across modules
+- [x] Detect circular dependencies
+- [x] Handle visibility (`pub`)
 
-### Phase 3: Cross-Module Type Checking
-- [ ] Build global symbol table
-- [ ] Type check across module boundaries
-- [ ] Validate spawn/await types across modules
+### Phase 3: Cross-Module Type Checking ✓
+- [x] Build global symbol table
+- [x] Type check across module boundaries
+- [x] Validate spawn/await types across modules
 
-### Phase 4: CLI & Project Support
-- [ ] Parse `sage.toml`
+### Phase 4: CLI & Project Support (Partial)
+- [x] Parse `sage.toml`
 - [ ] Implement `sage new`
-- [ ] Update `sage run` for projects
-- [ ] Update `sage check` for projects
+- [x] Update `sage run` for projects
+- [x] Update `sage check` for projects
 
 ### Phase 5: Polish
-- [ ] Good error messages for import failures
+- [x] Good error messages for import failures
 - [ ] IDE support considerations (future)
 - [ ] Documentation generation (future)
 

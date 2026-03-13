@@ -105,6 +105,62 @@ fn factorial(n: Int) -> Int {
 }
 ```
 
+### Modules & Multi-File Projects
+
+Sage supports multi-file projects with a familiar module system:
+
+```
+my_project/
+├── sage.toml           # Project manifest
+└── src/
+    ├── main.sg         # Entry point
+    └── agents.sg       # Agent definitions
+```
+
+**sage.toml:**
+```toml
+[project]
+name = "my_project"
+entry = "src/main.sg"
+```
+
+**src/agents.sg:**
+```sage
+pub agent Worker {
+    belief task: String
+
+    on start {
+        emit(self.task ++ " completed");
+    }
+}
+```
+
+**src/main.sg:**
+```sage
+mod agents;
+use agents::Worker;
+
+agent Main {
+    on start {
+        let w = spawn Worker { task: "Processing" };
+        let result = await w;
+        print(result);
+        emit(0);
+    }
+}
+run Main;
+```
+
+**Visibility:** Items are private by default. Use `pub` to export agents and functions.
+
+**Import styles:**
+```sage
+use agents::Worker;              // Single import
+use agents::{Worker, Helper};    // Multiple imports
+use agents::*;                   // Glob import
+use agents::Worker as W;         // Aliased import
+```
+
 ### Control Flow
 
 ```sage
@@ -227,7 +283,11 @@ cargo build --release
 Run a Sage program:
 
 ```bash
+# Single file
 sage run examples/hello.sg
+
+# Project directory (looks for sage.toml)
+sage run my_project/
 
 # With real LLM (requires SAGE_API_KEY)
 export SAGE_API_KEY="your-openai-api-key"
@@ -237,7 +297,11 @@ sage run examples/research.sg
 Check a program for errors without running:
 
 ```bash
+# Single file
 sage check examples/hello.sg
+
+# Project directory
+sage check my_project/
 ```
 
 ### Environment Variables
@@ -254,15 +318,16 @@ sage check examples/hello.sg
 Sage follows a traditional multi-pass compiler architecture:
 
 ```
-Source (.sg) → Lexer → Parser → Type Checker → Rust Codegen → Native Binary
+Source (.sg) → Lexer → Parser → Loader → Type Checker → Rust Codegen → Native Binary
 ```
 
-The compiler is written in ~7,600 lines of Rust, organised into focused crates:
+The compiler is written in ~9,000 lines of Rust, organised into focused crates:
 
 | Crate | Purpose |
 |-------|---------|
 | `sage-lexer` | Tokenizer (logos-based) |
 | `sage-parser` | Parser (chumsky-based) |
+| `sage-loader` | Module loading + project management |
 | `sage-checker` | Name resolution + type checker |
 | `sage-codegen` | Rust code generator |
 | `sage-runtime` | Async runtime, LLM integration |
@@ -276,6 +341,7 @@ sage/
 │   ├── sage-types/        # Shared type definitions (Span, Ident, TypeExpr)
 │   ├── sage-lexer/        # Tokenizer (logos-based)
 │   ├── sage-parser/       # Parser (chumsky-based)
+│   ├── sage-loader/       # Module loading + project management
 │   ├── sage-checker/      # Name resolution + type checker
 │   ├── sage-codegen/      # Rust code generator
 │   ├── sage-runtime/      # Runtime library (agents, LLM, etc.)
@@ -284,6 +350,7 @@ sage/
 │   └── build-toolchain.sh # Build pre-compiled runtime
 ├── docs/
 │   ├── RFC-0001-poc.md    # Language specification
+│   ├── RFC-0002-*.md      # Multi-file project structure
 │   └── VISION.md          # Roadmap and future direction
 ├── tests/
 │   └── docker/            # Installation verification tests
