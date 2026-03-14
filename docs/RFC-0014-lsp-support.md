@@ -1,6 +1,6 @@
 # RFC-0014: Language Server Protocol (LSP) Support
 
-- **Status:** Draft
+- **Status:** Implemented (v0.5.1)
 - **Created:** 2026-03-13
 - **Author:** Pete Pavlovski
 - **Depends on:** RFC-0001 (Lexer/Parser), RFC-0003 (Compiler), RFC-0005 (User-Defined Types)

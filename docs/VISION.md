@@ -132,6 +132,7 @@ It's a domain-specific language for AI agent systems. That's a narrow but potent
 
 - **How do we handle agent failures?** ✓ Implemented via `try`/`catch`/`on error` (RFC-0007)
 - **How do agents access external services?** ✓ Implemented via built-in tools with `use` declaration (RFC-0011)
+- **How do we get editor support?** ✓ Implemented via `sage sense` LSP server with Zed and VS Code extensions (RFC-0014)
 
 ---
 
