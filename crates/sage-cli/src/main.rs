@@ -12,13 +12,16 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
 
-// Emojis for different stages
-static SPARKLES: Emoji<'_, '_> = Emoji("✨ ", "* ");
-static GEAR: Emoji<'_, '_> = Emoji("⚙️  ", "> ");
+// Emojis for output
+static SPARKLES: Emoji<'_, '_> = Emoji("✨ ", "");
 static CHECK: Emoji<'_, '_> = Emoji("✓ ", "v ");
 static ROCKET: Emoji<'_, '_> = Emoji("🚀 ", ">> ");
-static PACKAGE: Emoji<'_, '_> = Emoji("📦 ", "+ ");
-static TRASH: Emoji<'_, '_> = Emoji("🗑️  ", "- ");
+
+// Character names with emojis - the voices of Sage
+static WARD: Emoji<'_, '_> = Emoji("🦉 Ward", "Ward");     // The owl - compiler & type-checker
+static GROVE: Emoji<'_, '_> = Emoji("🌲 Grove", "Grove");  // The evergreen - package manager
+#[allow(dead_code)]
+static OSWYN: Emoji<'_, '_> = Emoji("👻 Oswyn", "Oswyn");  // The wisp - explainer & helper (for sage explain)
 
 /// Ward the owl - Sage's mascot
 const WARD_ASCII: &str = r#"
@@ -206,7 +209,7 @@ fn run_file(path: &PathBuf, release: bool, quiet: bool) -> Result<()> {
     // Run the compiled binary
     if !quiet {
         println!();
-        println!("{}Running...", ROCKET);
+        println!("{}{} is running your program...", ROCKET, style(WARD).cyan().bold());
         println!();
     }
 
@@ -259,10 +262,10 @@ fn check_file(path: &PathBuf) -> Result<()> {
     }
 
     println!(
-        "{}{} {} {}",
+        "{}{} found {} in {}",
         SPARKLES,
-        style("No errors").green().bold(),
-        style("in").dim(),
+        style(WARD).cyan().bold(),
+        style("no errors").green().bold(),
         style(&display_name).yellow()
     );
     Ok(())
@@ -459,7 +462,11 @@ fn build_file(
     };
 
     if !quiet {
-        println!("{}Compiling {}", GEAR, style(&display_name).yellow().bold());
+        println!(
+            "{} is compiling {}",
+            style(WARD).cyan().bold(),
+            style(&display_name).yellow().bold()
+        );
         println!();
     }
 
@@ -471,7 +478,7 @@ fn build_file(
                 .unwrap()
                 .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
         );
-        sp.set_message("Loading...");
+        sp.set_message(format!("{} is loading...", WARD));
         sp.enable_steady_tick(std::time::Duration::from_millis(80));
         Some(sp)
     } else {
@@ -480,7 +487,7 @@ fn build_file(
 
     // Load the project/file with package resolution
     if let Some(ref sp) = spinner {
-        sp.set_message("Resolving packages...");
+        sp.set_message(format!("{} is resolving packages...", GROVE));
     }
 
     let (module_tree, installed_packages) = match load_project_with_packages(path) {
@@ -498,12 +505,12 @@ fn build_file(
 
     if installed_packages && !quiet {
         if let Some(ref sp) = spinner {
-            sp.set_message("Packages installed, loading...");
+            sp.set_message(format!("{} installed packages, {} is loading...", GROVE, WARD));
         }
     }
 
     if let Some(ref sp) = spinner {
-        sp.set_message("Type checking...");
+        sp.set_message(format!("{} is type-checking...", WARD));
     }
 
     // Type check the module tree
@@ -526,7 +533,7 @@ fn build_file(
     }
 
     if let Some(ref sp) = spinner {
-        sp.set_message("Generating Rust...");
+        sp.set_message(format!("{} is generating Rust...", WARD));
     }
 
     // Generate Rust code from module tree
@@ -583,9 +590,9 @@ fn build_file(
         );
         println!();
         println!(
-            "{}{} Rust code generated in {}",
+            "{}{} generated Rust code in {}",
             SPARKLES,
-            style("Done").green().bold(),
+            style(WARD.to_string()).cyan().bold(),
             style(project_dir.display()).yellow()
         );
         return Ok(None);
@@ -593,9 +600,9 @@ fn build_file(
 
     if let Some(ref sp) = spinner {
         if use_toolchain {
-            sp.set_message("Compiling...");
+            sp.set_message(format!("{} is compiling...", WARD));
         } else {
-            sp.set_message("Building with cargo...");
+            sp.set_message(format!("{} is building with cargo...", WARD));
         }
     }
 
@@ -615,9 +622,9 @@ fn build_file(
     if !quiet {
         let mode = if use_toolchain { "" } else { " (cargo)" };
         println!(
-            "{}{} Compiled {}{} in {:.2}s",
+            "{}{} compiled {}{} in {:.2}s",
             SPARKLES,
-            style("Done").green().bold(),
+            style(WARD.to_string()).cyan().bold(),
             style(&display_name).yellow(),
             style(mode).dim(),
             total_duration.as_secs_f64()
@@ -676,8 +683,9 @@ run Main;
     // Print success message
     print_banner();
     println!(
-        "{}Created project {}",
+        "{}{} created project {}",
         SPARKLES,
+        style(WARD.to_string()).cyan().bold(),
         style(name).green().bold()
     );
     println!();
@@ -773,16 +781,16 @@ fn cmd_add(
     let ref_val = tag.or(branch).or(rev).unwrap();
 
     println!(
-        "{}Added {} ({} = {})",
-        PACKAGE,
+        "{} added {} ({} = {})",
+        style(GROVE.to_string()).cyan().bold(),
         style(package).green().bold(),
         ref_type,
         style(&ref_val).yellow()
     );
     println!();
     println!(
-        "{}Run {} to install",
-        style("  hint: ").dim(),
+        "  {} Run {} to install",
+        style(format!("{} suggests:", OSWYN)).dim(),
         style("sage install").cyan()
     );
 
@@ -813,7 +821,11 @@ fn cmd_remove(package: &str) -> Result<()> {
                 .into_diagnostic()
                 .wrap_err("Failed to write sage.toml")?;
 
-            println!("{}Removed {}", TRASH, style(package).red().bold());
+            println!(
+                "{} removed {}",
+                style(GROVE.to_string()).cyan().bold(),
+                style(package).red().bold()
+            );
             return Ok(());
         }
     }
@@ -842,7 +854,7 @@ fn cmd_install() -> Result<()> {
         return Ok(());
     }
 
-    println!("{}Installing dependencies...", GEAR);
+    println!("{} is installing dependencies...", style(GROVE.to_string()).cyan().bold());
 
     let project_root = PathBuf::from(".");
     let lock_path = project_root.join("sage.lock");
@@ -856,14 +868,14 @@ fn cmd_install() -> Result<()> {
             lock.packages.len()
         } else {
             // Re-resolve
-            println!("  Lock file outdated, resolving...");
+            println!("  Lock file outdated, {} is resolving...", GROVE);
             let result = resolve_dependencies(&project_root, &deps, Some(&lock))
                 .map_err(|e| miette::miette!("{}", e))?;
             result.packages.len()
         }
     } else {
         // Fresh resolve
-        println!("  Resolving dependencies...");
+        println!("  {} is resolving dependencies...", GROVE);
         let result = resolve_dependencies(&project_root, &deps, None)
             .map_err(|e| miette::miette!("{}", e))?;
         result.packages.len()
@@ -871,8 +883,9 @@ fn cmd_install() -> Result<()> {
 
     println!();
     println!(
-        "{}Installed {} package{}",
+        "{}{} installed {} package{}",
         SPARKLES,
+        style(GROVE.to_string()).cyan().bold(),
         style(resolved).green().bold(),
         if resolved == 1 { "" } else { "s" }
     );
@@ -905,9 +918,9 @@ fn cmd_update(package: Option<&str>) -> Result<()> {
         if !deps.contains_key(pkg) {
             miette::bail!("Package '{}' not found in dependencies", pkg);
         }
-        println!("{}Updating {}...", GEAR, style(pkg).yellow());
+        println!("{} is updating {}...", style(GROVE.to_string()).cyan().bold(), style(pkg).yellow());
     } else {
-        println!("{}Updating all dependencies...", GEAR);
+        println!("{} is updating all dependencies...", style(GROVE.to_string()).cyan().bold());
     }
 
     let project_root = PathBuf::from(".");
@@ -918,8 +931,9 @@ fn cmd_update(package: Option<&str>) -> Result<()> {
 
     println!();
     println!(
-        "{}Updated {} package{}",
+        "{}{} updated {} package{}",
         SPARKLES,
+        style(GROVE.to_string()).cyan().bold(),
         style(result.packages.len()).green().bold(),
         if result.packages.len() == 1 { "" } else { "s" }
     );
@@ -937,7 +951,7 @@ fn cmd_cache_list() -> Result<()> {
         return Ok(());
     }
 
-    println!("{}Cached packages:", PACKAGE);
+    println!("{}'s cached packages:", style(GROVE.to_string()).cyan().bold());
     println!();
 
     for (name, rev, path) in &packages {
@@ -970,8 +984,8 @@ fn cmd_cache_remove(package: &str) -> Result<()> {
         .map_err(|e| miette::miette!("{}", e))?;
 
     println!(
-        "{}Removed {} from cache",
-        TRASH,
+        "{} removed {} from cache",
+        style(GROVE.to_string()).cyan().bold(),
         style(package).red().bold()
     );
 
@@ -989,8 +1003,8 @@ fn cmd_cache_clean() -> Result<()> {
 
     let size_mb = size_before as f64 / 1024.0 / 1024.0;
     println!(
-        "{}Cleared {} package{} ({:.1} MB)",
-        TRASH,
+        "{} cleared {} package{} ({:.1} MB)",
+        style(GROVE.to_string()).cyan().bold(),
         count,
         if count == 1 { "" } else { "s" },
         size_mb

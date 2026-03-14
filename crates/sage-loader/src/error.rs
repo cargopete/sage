@@ -11,7 +11,7 @@ pub enum LoadError {
     #[error("module '{mod_name}' not found")]
     #[diagnostic(
         code(sage::loader::file_not_found),
-        help("expected one of: {}", searched.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", "))
+        help("Oswyn looked for: {}", searched.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", "))
     )]
     FileNotFound {
         mod_name: String,
@@ -32,7 +32,7 @@ pub enum LoadError {
     },
 
     /// Parse errors in a module.
-    #[error("parse error in '{file}'")]
+    #[error("parse error in '{file}': {}", errors.join("; "))]
     #[diagnostic(code(sage::loader::parse_error))]
     ParseError { file: PathBuf, errors: Vec<String> },
 
@@ -40,7 +40,7 @@ pub enum LoadError {
     #[error("circular dependency detected")]
     #[diagnostic(
         code(sage::loader::circular_dependency),
-        help("cycle: {}", cycle.join(" -> "))
+        help("Oswyn traced the cycle: {}", cycle.join(" -> "))
     )]
     CircularDependency { cycle: Vec<String> },
 
@@ -48,7 +48,7 @@ pub enum LoadError {
     #[error("ambiguous module '{mod_name}'")]
     #[diagnostic(
         code(sage::loader::ambiguous_module),
-        help("both {} exist", candidates.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(" and "))
+        help("Oswyn found both: {}", candidates.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(" and "))
     )]
     AmbiguousModule {
         mod_name: String,

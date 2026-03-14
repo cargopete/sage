@@ -11,7 +11,7 @@ pub enum PackageError {
     #[error("incompatible versions of '{package}'")]
     #[diagnostic(
         code(E030),
-        help("'{package}' is required at version {version_a} by {requirer_a} and version {version_b} by {requirer_b}")
+        help("Oswyn explains: '{package}' is required at {version_a} by {requirer_a} and {version_b} by {requirer_b}")
     )]
     IncompatibleVersions {
         package: String,
@@ -25,7 +25,7 @@ pub enum PackageError {
     #[error("package name mismatch: expected '{expected}', found '{found}'")]
     #[diagnostic(
         code(E031),
-        help("the package declares its name as '{found}' in its sage.toml")
+        help("Oswyn explains: the package declares its name as '{found}' in sage.toml")
     )]
     PackageNameMismatch { expected: String, found: String },
 
@@ -33,7 +33,7 @@ pub enum PackageError {
     #[error("'{package}' is an executable, not a library")]
     #[diagnostic(
         code(E032),
-        help("packages with a `run` statement cannot be used as dependencies")
+        help("Oswyn explains: packages with a `run` statement cannot be used as dependencies")
     )]
     DependencyIsExecutable { package: String },
 
@@ -41,25 +41,25 @@ pub enum PackageError {
     #[error("no lock file found")]
     #[diagnostic(
         code(E033),
-        help("run `sage install` to create a lock file, or remove --offline")
+        help("Oswyn suggests: run `sage install` to create a lock file")
     )]
     LockFileMissing { path: PathBuf },
 
     /// E034: use references a package not declared in dependencies.
     #[error("package '{package}' not found in dependencies")]
-    #[diagnostic(code(E034), help("add it with `sage add {package} --git <url>`"))]
+    #[diagnostic(code(E034), help("Oswyn suggests: add it with `sage add {package} --git <url>`"))]
     PackageNotFound { package: String },
 
     /// E035: Git clone/fetch operation failed.
     #[error("failed to fetch '{url}'")]
-    #[diagnostic(code(E035), help("{reason}"))]
+    #[diagnostic(code(E035), help("Oswyn explains: {reason}"))]
     GitFetchFailed { url: String, reason: String },
 
     /// Invalid dependency specification in sage.toml.
     #[error("invalid dependency specification for '{package}'")]
     #[diagnostic(
         code(sage::package::invalid_dep),
-        help("dependencies must specify exactly one of: tag, branch, or rev")
+        help("Oswyn explains: dependencies must specify exactly one of: tag, branch, or rev")
     )]
     InvalidDependencySpec { package: String },
 
@@ -88,7 +88,7 @@ pub enum PackageError {
 
     /// Lock file is stale (sage.toml changed).
     #[error("sage.lock is out of date")]
-    #[diagnostic(code(sage::package::stale_lock), help("run `sage install` to update"))]
+    #[diagnostic(code(sage::package::stale_lock), help("Oswyn suggests: run `sage install` to update"))]
     StaleLockFile,
 
     /// Failed to parse lock file.
