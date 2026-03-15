@@ -50,6 +50,8 @@ pub struct Checker {
     agent_has_error_handler: bool,
     /// RFC-0007: Whether we're inside a try or catch expression (for E013 enforcement).
     in_error_handling: bool,
+    /// Whether we're inside an on_stop handler (emit is prohibited).
+    in_stop_handler: bool,
     /// RFC-0011: Tools declared by the current agent via `use`.
     current_agent_tools: HashSet<String>,
     /// RFC-0011: Reference to scope for tool lookups.
@@ -78,6 +80,7 @@ impl Checker {
             in_fallible_context: false,
             agent_has_error_handler: false,
             in_error_handling: false,
+            in_stop_handler: false,
             current_agent_tools: HashSet::new(),
             scope: Scope::with_builtins(),
             is_test_file: false,
@@ -102,6 +105,7 @@ impl Checker {
             in_fallible_context: false,
             agent_has_error_handler: false,
             in_error_handling: false,
+            in_stop_handler: false,
             current_agent_tools: HashSet::new(),
             scope: Scope::with_builtins(),
             is_test_file: true,
@@ -126,6 +130,7 @@ impl Checker {
             in_fallible_context: false,
             agent_has_error_handler: false,
             in_error_handling: false,
+            in_stop_handler: false,
             current_agent_tools: HashSet::new(),
             scope: Scope::with_builtins(),
             is_test_file: false,
@@ -385,7 +390,15 @@ impl Checker {
                 self.define_var(&param_name.name, Type::Named("Error".to_string()));
             }
 
+            // Track if we're in a stop handler (emit is prohibited)
+            let old_in_stop_handler = self.in_stop_handler;
+            if matches!(handler.event, EventKind::Stop) {
+                self.in_stop_handler = true;
+            }
+
             self.check_block(&handler.body);
+
+            self.in_stop_handler = old_in_stop_handler;
             self.pop_scope();
         }
 
@@ -856,8 +869,20 @@ impl Checker {
                 Type::Agent(agent.name.clone())
             }
 
-            Expr::Await { handle, span } => {
+            Expr::Await { handle, timeout, span } => {
                 let handle_ty = self.check_expr(handle);
+
+                // Check timeout if present (must be Int)
+                if let Some(timeout_expr) = timeout {
+                    let timeout_ty = self.check_expr(timeout_expr);
+                    if !matches!(timeout_ty, Type::Int) && !timeout_ty.is_error() {
+                        self.errors.push(CheckError::type_mismatch(
+                            "Int".to_string(),
+                            timeout_ty.to_string(),
+                            span,
+                        ));
+                    }
+                }
 
                 // RFC-0007: E013 - await is a fallible operation, must be wrapped in try or catch
                 if !self.in_error_handling {
@@ -916,7 +941,12 @@ impl Checker {
                 Type::Unit
             }
 
-            Expr::Emit { value, .. } => {
+            Expr::Emit { value, span } => {
+                // Check for emit in stop handler
+                if self.in_stop_handler {
+                    self.errors.push(CheckError::emit_in_stop_handler(span));
+                }
+
                 let value_ty = self.check_expr(value);
 
                 // Record the emit type for the current agent
@@ -1198,6 +1228,112 @@ impl Checker {
 
                 // Return the expression type (catch handles the error internally)
                 expr_ty
+            }
+
+            // fail expression - explicit error raising
+            Expr::Fail { error, span } => {
+                // Check that we're in a fallible context (can propagate errors)
+                if !self.in_fallible_context {
+                    // In an agent, check for error handler
+                    if self.current_agent.is_some() && !self.agent_has_error_handler {
+                        self.errors.push(CheckError::missing_error_handler(
+                            self.current_agent.as_ref().unwrap().clone(),
+                            span,
+                        ));
+                    } else if self.current_agent.is_none() {
+                        self.errors.push(CheckError::try_in_non_fallible(span));
+                    }
+                }
+
+                // Check the error expression
+                let error_ty = self.check_expr(error);
+
+                // Error must be either a String or the Error type
+                let is_valid_error = matches!(error_ty, Type::String)
+                    || matches!(&error_ty, Type::Named(n) if n == "Error")
+                    || error_ty.is_error();
+                if !is_valid_error {
+                    self.errors.push(CheckError::type_mismatch(
+                        "String or Error".to_string(),
+                        error_ty.to_string(),
+                        span,
+                    ));
+                }
+
+                // Return Never type - this expression never returns
+                Type::Never
+            }
+
+            // retry expression - retry a fallible operation
+            Expr::Retry {
+                count,
+                delay,
+                on_errors,
+                body,
+                span,
+            } => {
+                // Check that count is an Int
+                let count_ty = self.check_expr(count);
+                if !matches!(count_ty, Type::Int) && !count_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "Int".to_string(),
+                        count_ty.to_string(),
+                        count.span(),
+                    ));
+                }
+
+                // Check delay if present (must be Int)
+                if let Some(delay_expr) = delay {
+                    let delay_ty = self.check_expr(delay_expr);
+                    if !matches!(delay_ty, Type::Int) && !delay_ty.is_error() {
+                        self.errors.push(CheckError::type_mismatch(
+                            "Int".to_string(),
+                            delay_ty.to_string(),
+                            delay_expr.span(),
+                        ));
+                    }
+                }
+
+                // Check on_errors if present (each should be an ErrorKind variant)
+                if let Some(errors) = on_errors {
+                    for err_expr in errors {
+                        let _err_ty = self.check_expr(err_expr);
+                        // For now just type check - could validate ErrorKind later
+                    }
+                }
+
+                // The body is checked in a fallible context (errors can propagate)
+                let prev_fallible = self.in_fallible_context;
+                let prev_error_handling = self.in_error_handling;
+                self.in_fallible_context = true;
+                self.in_error_handling = true;
+
+                let body_ty = self.check_expr(body);
+
+                self.in_fallible_context = prev_fallible;
+                self.in_error_handling = prev_error_handling;
+
+                // If retry itself is not in an error handling context, emit warning
+                // since all retries could fail
+                if !self.in_error_handling {
+                    self.errors.push(CheckError::unhandled_error("retry", span));
+                }
+
+                // Return the body type
+                body_ty
+            }
+
+            // trace(message) - emit a trace event
+            Expr::Trace { message, span } => {
+                let msg_ty = self.check_expr(message);
+                if !matches!(msg_ty, Type::String) && !msg_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "String".to_string(),
+                        msg_ty.to_string(),
+                        span,
+                    ));
+                }
+                Type::Unit
             }
 
             // RFC-0009: Closures
@@ -3083,6 +3219,8 @@ struct ModuleChecker<'a> {
     agent_has_error_handler: bool,
     /// RFC-0007: Whether we're inside a try or catch expression (for E013 enforcement).
     in_error_handling: bool,
+    /// Whether we're inside an on_stop handler (emit is prohibited).
+    in_stop_handler: bool,
     /// RFC-0012: Whether this is a test file (_test.sg).
     is_test_file: bool,
     /// RFC-0012: Whether we're inside a test block.
@@ -3111,6 +3249,7 @@ impl<'a> ModuleChecker<'a> {
             in_fallible_context: false,
             agent_has_error_handler: false,
             in_error_handling: false,
+            in_stop_handler: false,
             is_test_file: false,
             in_test_block: false,
         }
@@ -3156,7 +3295,15 @@ impl<'a> ModuleChecker<'a> {
                 self.define_var(&param_name.name, Type::Named("Error".to_string()));
             }
 
+            // Track if we're in a stop handler (emit is prohibited)
+            let old_in_stop_handler = self.in_stop_handler;
+            if matches!(handler.event, EventKind::Stop) {
+                self.in_stop_handler = true;
+            }
+
             self.check_block(&handler.body);
+
+            self.in_stop_handler = old_in_stop_handler;
             self.pop_scope();
         }
 
@@ -3585,12 +3732,28 @@ impl<'a> ModuleChecker<'a> {
                 Type::Agent(agent.name.clone())
             }
 
-            Expr::Await { handle, span } => {
+            Expr::Await {
+                handle,
+                timeout,
+                span,
+            } => {
                 let handle_ty = self.check_expr(handle);
 
                 // RFC-0007: E013 - await is a fallible operation, must be wrapped in try or catch
                 if !self.in_error_handling {
                     self.errors.push(CheckError::unhandled_error("await", span));
+                }
+
+                // Check timeout is an Int if provided
+                if let Some(timeout_expr) = timeout {
+                    let timeout_ty = self.check_expr(timeout_expr);
+                    if !matches!(timeout_ty, Type::Int) && !timeout_ty.is_error() {
+                        self.errors.push(CheckError::type_mismatch(
+                            "Int".to_string(),
+                            timeout_ty.to_string(),
+                            timeout_expr.span(),
+                        ));
+                    }
                 }
 
                 if let Some(agent_name) = handle_ty.agent_name() {
@@ -3642,7 +3805,12 @@ impl<'a> ModuleChecker<'a> {
                 Type::Unit
             }
 
-            Expr::Emit { value, .. } => {
+            Expr::Emit { value, span } => {
+                // Check for emit in stop handler
+                if self.in_stop_handler {
+                    self.errors.push(CheckError::emit_in_stop_handler(span));
+                }
+
                 let value_ty = self.check_expr(value);
 
                 if let Some(agent_name) = &self.current_agent {
@@ -3924,6 +4092,112 @@ impl<'a> ModuleChecker<'a> {
 
                 // Return the expression type (catch handles the error internally)
                 expr_ty
+            }
+
+            // fail expression - explicit error raising
+            Expr::Fail { error, span } => {
+                // Check that we're in a fallible context (can propagate errors)
+                if !self.in_fallible_context {
+                    // In an agent, check for error handler
+                    if self.current_agent.is_some() && !self.agent_has_error_handler {
+                        self.errors.push(CheckError::missing_error_handler(
+                            self.current_agent.as_ref().unwrap().clone(),
+                            span,
+                        ));
+                    } else if self.current_agent.is_none() {
+                        self.errors.push(CheckError::try_in_non_fallible(span));
+                    }
+                }
+
+                // Check the error expression
+                let error_ty = self.check_expr(error);
+
+                // Error must be either a String or the Error type
+                let is_valid_error = matches!(error_ty, Type::String)
+                    || matches!(&error_ty, Type::Named(n) if n == "Error")
+                    || error_ty.is_error();
+                if !is_valid_error {
+                    self.errors.push(CheckError::type_mismatch(
+                        "String or Error".to_string(),
+                        error_ty.to_string(),
+                        span,
+                    ));
+                }
+
+                // Return Never type - this expression never returns
+                Type::Never
+            }
+
+            // retry expression - retry a fallible operation
+            Expr::Retry {
+                count,
+                delay,
+                on_errors,
+                body,
+                span,
+            } => {
+                // Check that count is an Int
+                let count_ty = self.check_expr(count);
+                if !matches!(count_ty, Type::Int) && !count_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "Int".to_string(),
+                        count_ty.to_string(),
+                        count.span(),
+                    ));
+                }
+
+                // Check delay if present (must be Int)
+                if let Some(delay_expr) = delay {
+                    let delay_ty = self.check_expr(delay_expr);
+                    if !matches!(delay_ty, Type::Int) && !delay_ty.is_error() {
+                        self.errors.push(CheckError::type_mismatch(
+                            "Int".to_string(),
+                            delay_ty.to_string(),
+                            delay_expr.span(),
+                        ));
+                    }
+                }
+
+                // Check on_errors if present (each should be an ErrorKind variant)
+                if let Some(errors) = on_errors {
+                    for err_expr in errors {
+                        let _err_ty = self.check_expr(err_expr);
+                        // For now just type check - could validate ErrorKind later
+                    }
+                }
+
+                // The body is checked in a fallible context (errors can propagate)
+                let prev_fallible = self.in_fallible_context;
+                let prev_error_handling = self.in_error_handling;
+                self.in_fallible_context = true;
+                self.in_error_handling = true;
+
+                let body_ty = self.check_expr(body);
+
+                self.in_fallible_context = prev_fallible;
+                self.in_error_handling = prev_error_handling;
+
+                // If retry itself is not in an error handling context, emit warning
+                // since all retries could fail
+                if !self.in_error_handling {
+                    self.errors.push(CheckError::unhandled_error("retry", span));
+                }
+
+                // Return the body type
+                body_ty
+            }
+
+            // trace(message) - emit a trace event
+            Expr::Trace { message, span } => {
+                let msg_ty = self.check_expr(message);
+                if !matches!(msg_ty, Type::String) && !msg_ty.is_error() {
+                    self.errors.push(CheckError::type_mismatch(
+                        "String".to_string(),
+                        msg_ty.to_string(),
+                        span,
+                    ));
+                }
+                Type::Unit
             }
 
             // RFC-0009: Closures

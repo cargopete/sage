@@ -36,6 +36,9 @@ pub enum Type {
     Tuple(Vec<Type>),
     /// Result type: `Result<T, E>`.
     Result(Box<Type>, Box<Type>),
+    /// Never type: expression that never returns (e.g., `fail`).
+    /// Compatible with any type since it diverges.
+    Never,
     /// An error type used when type checking fails.
     /// Propagates through expressions to avoid cascading errors.
     Error,
@@ -100,6 +103,10 @@ impl Type {
         }
         // Error types are compatible with everything to avoid cascading errors
         if self.is_error() || other.is_error() {
+            return true;
+        }
+        // Never type is compatible with everything (divergent expression)
+        if matches!(self, Type::Never) || matches!(other, Type::Never) {
             return true;
         }
         match (self, other) {
@@ -200,6 +207,7 @@ impl fmt::Display for Type {
                 write!(f, ")")
             }
             Type::Result(ok, err) => write!(f, "Result<{ok}, {err}>"),
+            Type::Never => write!(f, "Never"),
             Type::Error => write!(f, "<error>"),
         }
     }

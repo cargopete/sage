@@ -510,10 +510,12 @@ pub enum Expr {
         span: Span,
     },
 
-    /// Await: `await expr`
+    /// Await: `await expr` or `await expr timeout(ms)`
     Await {
         /// The agent handle to await.
         handle: Box<Expr>,
+        /// Optional timeout in milliseconds.
+        timeout: Option<Box<Expr>>,
         /// Span covering the expression.
         span: Span,
     },
@@ -682,6 +684,37 @@ pub enum Expr {
         span: Span,
     },
 
+    /// Fail expression: `fail "message"` or `fail Error { ... }`.
+    /// Type is `Never` - this expression never returns.
+    Fail {
+        /// The error value (either a string message or an Error record).
+        error: Box<Expr>,
+        /// Span covering the expression.
+        span: Span,
+    },
+
+    /// Retry expression: `retry(3) { ... }` or `retry(3, delay: 1000) { ... }`
+    Retry {
+        /// Number of retry attempts (1-10).
+        count: Box<Expr>,
+        /// Optional delay between attempts in milliseconds.
+        delay: Option<Box<Expr>>,
+        /// Optional list of error kinds to retry on.
+        on_errors: Option<Vec<Expr>>,
+        /// The body to retry.
+        body: Box<Expr>,
+        /// Span covering the expression.
+        span: Span,
+    },
+
+    /// Trace expression: `trace("message")` for emitting trace events.
+    Trace {
+        /// The message to trace (must be a string).
+        message: Box<Expr>,
+        /// Span covering the expression.
+        span: Span,
+    },
+
     /// Closure expression: `|params| body`
     Closure {
         /// The closure parameters.
@@ -780,6 +813,9 @@ impl Expr {
             | Expr::Receive { span, .. }
             | Expr::Try { span, .. }
             | Expr::Catch { span, .. }
+            | Expr::Fail { span, .. }
+            | Expr::Retry { span, .. }
+            | Expr::Trace { span, .. }
             | Expr::Closure { span, .. }
             | Expr::Tuple { span, .. }
             | Expr::TupleIndex { span, .. }

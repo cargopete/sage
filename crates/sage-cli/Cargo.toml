@@ -24,6 +24,7 @@ dotenvy = "0.15"
 console = "0.15"
 indicatif = "0.17"
 toml_edit = "0.22"
+walkdir = "2"
 
 [lints]
 workspace = true

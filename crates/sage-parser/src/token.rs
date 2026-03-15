@@ -118,8 +118,20 @@ pub enum Token {
     #[token("receive")]
     KwReceive,
 
+    #[token("fail")]
+    KwFail,
+
     #[token("fails")]
     KwFails,
+
+    #[token("timeout")]
+    KwTimeout,
+
+    #[token("retry")]
+    KwRetry,
+
+    #[token("delay")]
+    KwDelay,
 
     #[token("try")]
     KwTry,
@@ -140,6 +152,10 @@ pub enum Token {
     /// RFC-0012: Mock keyword for LLM mocking.
     #[token("mock")]
     KwMock,
+
+    /// Trace keyword for emitting trace events.
+    #[token("trace")]
+    KwTrace,
 
     // =========================================================================
     // Type keywords
@@ -359,11 +375,16 @@ impl Token {
                 | Token::KwConst
                 | Token::KwReceives
                 | Token::KwReceive
+                | Token::KwFail
                 | Token::KwFails
+                | Token::KwTimeout
+                | Token::KwRetry
+                | Token::KwDelay
                 | Token::KwTry
                 | Token::KwCatch
                 | Token::KwError
                 | Token::KwTool
+                | Token::KwTrace
         )
     }
 
@@ -463,13 +484,18 @@ impl std::fmt::Display for Token {
             Token::KwConst => write!(f, "const"),
             Token::KwReceives => write!(f, "receives"),
             Token::KwReceive => write!(f, "receive"),
+            Token::KwFail => write!(f, "fail"),
             Token::KwFails => write!(f, "fails"),
+            Token::KwTimeout => write!(f, "timeout"),
+            Token::KwRetry => write!(f, "retry"),
+            Token::KwDelay => write!(f, "delay"),
             Token::KwTry => write!(f, "try"),
             Token::KwCatch => write!(f, "catch"),
             Token::KwError => write!(f, "error"),
             Token::KwTool => write!(f, "tool"),
             Token::KwTest => write!(f, "test"),
             Token::KwMock => write!(f, "mock"),
+            Token::KwTrace => write!(f, "trace"),
 
             // Type keywords
             Token::TyInt => write!(f, "Int"),
@@ -1035,10 +1061,19 @@ mod tests {
 
     #[test]
     fn rfc7_keywords_are_keywords() {
+        assert!(Token::KwFail.is_keyword());
         assert!(Token::KwFails.is_keyword());
         assert!(Token::KwTry.is_keyword());
         assert!(Token::KwCatch.is_keyword());
         assert!(Token::KwError.is_keyword());
+    }
+
+    #[test]
+    fn lex_fail_expression() {
+        let mut lexer = Token::lexer("fail \"error message\"");
+        assert_eq!(lexer.next(), Some(Ok(Token::KwFail)));
+        assert_eq!(lexer.next(), Some(Ok(Token::StringLit)));
+        assert_eq!(lexer.next(), None);
     }
 
     // =========================================================================

@@ -964,6 +964,12 @@ fn expr_parser(source: Arc<str>) -> BoxedParser<'static, Token, Expr, ParseError
             });
 
         // await expr - we need to handle this carefully to avoid left recursion
+        // Parse: await handle [timeout(ms)]
+        let timeout_clause = just(Token::KwTimeout)
+            .ignore_then(just(Token::LParen))
+            .ignore_then(expr.clone())
+            .then_ignore(just(Token::RParen));
+
         let await_expr = just(Token::KwAwait)
             .ignore_then(ident_token_parser(src.clone()).map_with_span({
                 let src = src.clone();
@@ -972,10 +978,12 @@ fn expr_parser(source: Arc<str>) -> BoxedParser<'static, Token, Expr, ParseError
                     span: make_span(&src, span),
                 }
             }))
+            .then(timeout_clause.or_not())
             .map_with_span({
                 let src = src.clone();
-                move |handle, span: Range<usize>| Expr::Await {
+                move |(handle, timeout), span: Range<usize>| Expr::Await {
                     handle: Box::new(handle),
+                    timeout: timeout.map(Box::new),
                     span: make_span(&src, span),
                 }
             });
@@ -1066,6 +1074,19 @@ fn expr_parser(source: Arc<str>) -> BoxedParser<'static, Token, Expr, ParseError
             .map_with_span({
                 let src = src.clone();
                 move |_, span: Range<usize>| Expr::Receive {
+                    span: make_span(&src, span),
+                }
+            });
+
+        // trace(message) - emit a trace event
+        let trace_expr = just(Token::KwTrace)
+            .ignore_then(just(Token::LParen))
+            .ignore_then(expr.clone())
+            .then_ignore(just(Token::RParen))
+            .map_with_span({
+                let src = src.clone();
+                move |message, span: Range<usize>| Expr::Trace {
+                    message: Box::new(message),
                     span: make_span(&src, span),
                 }
             });
@@ -1206,6 +1227,7 @@ fn expr_parser(source: Arc<str>) -> BoxedParser<'static, Token, Expr, ParseError
             .or(send_expr)
             .or(emit_expr)
             .or(receive_expr)
+            .or(trace_expr)
             .or(match_expr)
             .or(self_access)
             .or(record_construct)
@@ -1327,7 +1349,7 @@ fn expr_parser(source: Arc<str>) -> BoxedParser<'static, Token, Expr, ParseError
         // RFC-0007: try expression - propagates errors upward
         // try expr
         let try_expr = just(Token::KwTry)
-            .ignore_then(postfix)
+            .ignore_then(postfix.clone())
             .map_with_span({
                 let src = src.clone();
                 move |inner, span: Range<usize>| Expr::Try {
@@ -1337,8 +1359,63 @@ fn expr_parser(source: Arc<str>) -> BoxedParser<'static, Token, Expr, ParseError
             })
             .boxed();
 
-        // Combined unary (including try)
-        let unary = try_expr.or(unary).boxed();
+        // fail expression - explicit error raising
+        // fail "message" or fail Error { ... }
+        let fail_expr = just(Token::KwFail)
+            .ignore_then(postfix.clone())
+            .map_with_span({
+                let src = src.clone();
+                move |error, span: Range<usize>| Expr::Fail {
+                    error: Box::new(error),
+                    span: make_span(&src, span),
+                }
+            })
+            .boxed();
+
+        // retry expression - retry a fallible operation
+        // retry(count) { body }
+        // retry(count, delay: ms) { body }
+        // retry(count, on: [ErrorKind.Network, ...]) { body }
+        let retry_delay = just(Token::Comma)
+            .ignore_then(just(Token::KwDelay))
+            .ignore_then(just(Token::Colon))
+            .ignore_then(postfix.clone());
+
+        let retry_on = just(Token::Comma)
+            .ignore_then(just(Token::KwOn))
+            .ignore_then(just(Token::Colon))
+            .ignore_then(
+                postfix
+                    .clone()
+                    .separated_by(just(Token::Comma))
+                    .allow_trailing()
+                    .delimited_by(just(Token::LBracket), just(Token::RBracket)),
+            );
+
+        let retry_expr = just(Token::KwRetry)
+            .ignore_then(just(Token::LParen))
+            .ignore_then(postfix.clone())
+            .then(retry_delay.or_not())
+            .then(retry_on.or_not())
+            .then_ignore(just(Token::RParen))
+            .then(
+                expr.clone()
+                    .delimited_by(just(Token::LBrace), just(Token::RBrace)),
+            )
+            .map_with_span({
+                let src = src.clone();
+                move |(((count, delay), on_errors), body), span: Range<usize>| Expr::Retry {
+                    count: Box::new(count),
+                    delay: delay.map(Box::new),
+                    on_errors,
+                    body: Box::new(body),
+                    span: make_span(&src, span),
+                }
+            })
+            .boxed();
+
+        // Combined unary (including try, fail, and retry)
+        let unary = retry_expr.or(fail_expr).or(try_expr).or(unary).boxed();
 
         // Binary operators with precedence levels
         // Level 7: * / %
@@ -2211,6 +2288,45 @@ mod tests {
         let (prog, errors) = parse_str(source);
         assert!(errors.is_empty(), "errors: {errors:?}");
         prog.expect("should parse");
+    }
+
+    #[test]
+    fn parse_await_with_timeout() {
+        let source = r#"
+            agent Worker {
+                on start {
+                    emit("done");
+                }
+            }
+
+            agent Main {
+                on start {
+                    let w = spawn Worker {};
+                    let result = await w timeout(5000);
+                    emit(result);
+                }
+            }
+            run Main;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        // Find the await statement in Main's on start handler
+        let main = &prog.agents[1];
+        let stmts = &main.handlers[0].body.stmts;
+        // stmts[0] is the let w = spawn...
+        // stmts[1] is the let result = await w timeout(5000)
+        if let Stmt::Let { value, .. } = &stmts[1] {
+            if let Expr::Await { timeout, .. } = value {
+                assert!(timeout.is_some(), "timeout should be present");
+            } else {
+                panic!("expected Await expression");
+            }
+        } else {
+            panic!("expected Let statement with value");
+        }
     }
 
     #[test]
@@ -3165,6 +3281,115 @@ mod tests {
             if let Expr::Catch { error_bind, .. } = value {
                 assert!(error_bind.is_some());
                 assert_eq!(error_bind.as_ref().unwrap().name, "e");
+            } else {
+                panic!("expected Catch expression");
+            }
+        } else {
+            panic!("expected Let statement");
+        }
+    }
+
+    #[test]
+    fn parse_fail_expression() {
+        let source = r#"
+            agent Main {
+                on start {
+                    fail "something went wrong";
+                }
+                on error(e) {
+                    emit(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        // Find the fail statement
+        let handler = &prog.agents[0].handlers[0];
+        if let Stmt::Expr { expr, .. } = &handler.body.stmts[0] {
+            if let Expr::Fail { error, .. } = expr {
+                assert!(matches!(**error, Expr::Literal { .. }));
+            } else {
+                panic!("expected Fail expression, got {expr:?}");
+            }
+        } else {
+            panic!("expected Expr statement");
+        }
+    }
+
+    #[test]
+    fn parse_retry_expression() {
+        let source = r#"
+            agent Main {
+                topic: String
+
+                on start {
+                    let result = retry(3) {
+                        try infer("Summarize: {self.topic}")
+                    } catch { "fallback" };
+                    emit(result);
+                }
+
+                on error(e) {
+                    emit("");
+                }
+            }
+            run Main;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        // Find the let statement with retry
+        let handler = &prog.agents[0].handlers[0];
+        if let Stmt::Let { value, .. } = &handler.body.stmts[0] {
+            // Should be Catch wrapping Retry
+            if let Expr::Catch { expr, .. } = value {
+                if let Expr::Retry { count, delay, .. } = expr.as_ref() {
+                    assert!(matches!(**count, Expr::Literal { .. }));
+                    assert!(delay.is_none());
+                } else {
+                    panic!("expected Retry expression");
+                }
+            } else {
+                panic!("expected Catch expression");
+            }
+        } else {
+            panic!("expected Let statement");
+        }
+    }
+
+    #[test]
+    fn parse_retry_with_delay() {
+        let source = r#"
+            agent Main {
+                on start {
+                    let result = retry(3, delay: 1000) {
+                        42
+                    } catch { 0 };
+                    emit(result);
+                }
+            }
+            run Main;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        // Find the let statement with retry
+        let handler = &prog.agents[0].handlers[0];
+        if let Stmt::Let { value, .. } = &handler.body.stmts[0] {
+            if let Expr::Catch { expr, .. } = value {
+                if let Expr::Retry { delay, .. } = expr.as_ref() {
+                    assert!(delay.is_some());
+                } else {
+                    panic!("expected Retry expression");
+                }
             } else {
                 panic!("expected Catch expression");
             }

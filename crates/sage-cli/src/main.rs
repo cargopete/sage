@@ -10,8 +10,10 @@ use sage_loader::{
     discover_test_files, load_project, load_project_with_packages, load_test_files, ModuleTree,
 };
 use sage_package::{LockFile, PackageCache};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Arc;
 use std::time::Instant;
 
 // Emojis for output
@@ -62,6 +64,14 @@ enum Commands {
         /// Quiet mode - minimal output
         #[arg(short, long)]
         quiet: bool,
+
+        /// Enable tracing (emit trace events to stderr)
+        #[arg(long)]
+        trace: bool,
+
+        /// Write trace events to a file instead of stderr
+        #[arg(long)]
+        trace_file: Option<PathBuf>,
     },
 
     /// Compile a Sage program to a native binary
@@ -160,6 +170,23 @@ enum Commands {
         #[arg(long)]
         no_colour: bool,
     },
+
+    /// Evaluate a Sage expression or short script
+    Eval {
+        /// Expression or script to evaluate (or path to .sg file)
+        code: String,
+    },
+
+    /// Format Sage source files
+    Fmt {
+        /// Files or directories to format
+        #[arg(default_value = ".")]
+        paths: Vec<PathBuf>,
+
+        /// Check if files are formatted (exit 1 if not)
+        #[arg(long)]
+        check: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -189,7 +216,9 @@ fn main() -> Result<()> {
             file,
             release,
             quiet,
-        } => run_file(&file, release, quiet),
+            trace,
+            trace_file,
+        } => run_file(&file, release, quiet, trace, trace_file.as_deref()),
         Commands::Build {
             file,
             release,
@@ -224,6 +253,8 @@ fn main() -> Result<()> {
             verbose,
             no_colour,
         } => cmd_test(&path, filter, file, serial, verbose, no_colour),
+        Commands::Eval { code } => cmd_eval(&code),
+        Commands::Fmt { paths, check } => cmd_fmt(&paths, check),
     }
 }
 
@@ -240,21 +271,42 @@ fn print_banner() {
 }
 
 /// Run a Sage program (compile + execute).
-fn run_file(path: &PathBuf, release: bool, quiet: bool) -> Result<()> {
+fn run_file(
+    path: &PathBuf,
+    release: bool,
+    quiet: bool,
+    trace: bool,
+    trace_file: Option<&Path>,
+) -> Result<()> {
     // Build the program
     let output_dir = PathBuf::from("target/sage");
     let binary_path = build_file(path, release, &output_dir, false, quiet)?;
 
-    let binary_path = binary_path.ok_or_else(|| miette::miette!("Build did not produce binary"))?;
+    let binary_path =
+        binary_path.ok_or_else(|| miette::miette!("Build did not produce binary"))?;
 
     // Run the compiled binary
     if !quiet {
         println!();
-        println!("{}{} is running your program...", ROCKET, style(WARD).cyan().bold());
+        println!(
+            "{}{} is running your program...",
+            ROCKET,
+            style(WARD).cyan().bold()
+        );
         println!();
     }
 
-    let status = Command::new(&binary_path)
+    let mut cmd = Command::new(&binary_path);
+
+    // Set tracing environment variables
+    if trace || trace_file.is_some() {
+        cmd.env("SAGE_TRACE", "1");
+    }
+    if let Some(file) = trace_file {
+        cmd.env("SAGE_TRACE_FILE", file);
+    }
+
+    let status = cmd
         .status()
         .into_diagnostic()
         .wrap_err("Failed to run compiled program")?;
@@ -1495,4 +1547,279 @@ fn extract_test_error(stdout: &str, stderr: &str, test_name: &str) -> String {
     }
 
     error_lines.join("\n")
+}
+
+/// Evaluate a Sage expression or short script.
+fn cmd_eval(code: &str) -> Result<()> {
+    use sage_codegen::generate;
+    use sage_parser::{lex, parse};
+    use std::fs;
+    use std::io::Write;
+    use std::sync::Arc;
+
+    // Check if the code is a file path
+    let code_to_eval = if code.ends_with(".sg") && PathBuf::from(code).exists() {
+        fs::read_to_string(code)
+            .into_diagnostic()
+            .wrap_err_with(|| format!("Failed to read file: {}", code))?
+    } else {
+        code.to_string()
+    };
+
+    // Wrap in a minimal program for parsing
+    // If the code looks like statements, wrap it; if it looks like an expression, print it
+    let is_statement = code_to_eval.contains(';') || code_to_eval.contains("let ");
+    let is_print_call = code_to_eval.trim().starts_with("print(");
+
+    // Ensure the code ends with a semicolon for statement mode
+    let code_with_semi = if is_statement || is_print_call {
+        let trimmed = code_to_eval.trim();
+        if trimmed.ends_with(';') {
+            trimmed.to_string()
+        } else {
+            format!("{};", trimmed)
+        }
+    } else {
+        code_to_eval.clone()
+    };
+
+    let wrapped_code = if is_statement || is_print_call {
+        // Statements or print calls - wrap in agent as-is
+        format!(
+            r#"agent Eval {{
+    on start {{
+        {}
+        emit(0);
+    }}
+}}
+run Eval;"#,
+            code_with_semi
+        )
+    } else {
+        // Single expression - print it
+        format!(
+            r#"agent Eval {{
+    on start {{
+        let _result = {};
+        print(_result);
+        emit(0);
+    }}
+}}
+run Eval;"#,
+            code_with_semi
+        )
+    };
+
+    // Parse the wrapped code
+    let lex_result = lex(&wrapped_code).map_err(|e| miette::miette!("Lex error: {}", e))?;
+    let source_arc: Arc<str> = Arc::from(wrapped_code.as_str());
+    let (program, parse_errors) = parse(lex_result.tokens(), source_arc);
+
+    if !parse_errors.is_empty() {
+        for err in &parse_errors {
+            eprintln!("{}", err);
+        }
+        miette::bail!("Parse errors in eval code");
+    }
+
+    let program = program.ok_or_else(|| miette::miette!("Failed to parse eval code"))?;
+
+    // Type check (lenient - we want quick feedback)
+    let checker = Checker::new();
+    let result = checker.check(&program);
+    if result
+        .errors
+        .iter()
+        .any(|e| e.severity() == Some(Severity::Error))
+    {
+        for err in &result.errors {
+            eprintln!("{}", err);
+        }
+        miette::bail!("Type errors in eval code");
+    }
+
+    // Generate Rust code
+    let generated = generate(&program, "sage-eval");
+
+    // Create temp directory for compilation
+    let temp_dir = PathBuf::from("target/sage/eval");
+    fs::create_dir_all(&temp_dir)
+        .into_diagnostic()
+        .wrap_err("Failed to create temp directory")?;
+
+    // Write Cargo.toml (use path dependency for local development)
+    // Empty [workspace] ensures this isn't treated as part of parent workspace
+    let cargo_toml = format!(
+        r#"[package]
+name = "sage-eval"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[dependencies]
+sage-runtime = {{ version = "0.6", path = "{}" }}
+tokio = {{ version = "1", features = ["full"] }}
+"#,
+        std::env::current_dir()
+            .unwrap()
+            .join("crates/sage-runtime")
+            .display()
+    );
+
+    let cargo_path = temp_dir.join("Cargo.toml");
+    let mut file = fs::File::create(&cargo_path)
+        .into_diagnostic()
+        .wrap_err("Failed to create Cargo.toml")?;
+    file.write_all(cargo_toml.as_bytes())
+        .into_diagnostic()
+        .wrap_err("Failed to write Cargo.toml")?;
+
+    // Write main.rs
+    let src_dir = temp_dir.join("src");
+    fs::create_dir_all(&src_dir)
+        .into_diagnostic()
+        .wrap_err("Failed to create src directory")?;
+
+    let main_path = src_dir.join("main.rs");
+    let mut file = fs::File::create(&main_path)
+        .into_diagnostic()
+        .wrap_err("Failed to create main.rs")?;
+    file.write_all(generated.main_rs.as_bytes())
+        .into_diagnostic()
+        .wrap_err("Failed to write main.rs")?;
+
+    // Compile (use --quiet to suppress output unless error)
+    let output = Command::new("cargo")
+        .args(["build", "--release", "--quiet"])
+        .current_dir(&temp_dir)
+        .output()
+        .into_diagnostic()
+        .wrap_err("Failed to run cargo build")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        miette::bail!("Compilation failed:\n{}", stderr);
+    }
+
+    // Run
+    let binary_path = temp_dir.join("target/release/sage-eval");
+    let status = Command::new(&binary_path)
+        .status()
+        .into_diagnostic()
+        .wrap_err("Failed to run eval program")?;
+
+    if !status.success() {
+        if let Some(code) = status.code() {
+            std::process::exit(code);
+        }
+    }
+
+    Ok(())
+}
+
+/// Format Sage source files.
+fn cmd_fmt(paths: &[PathBuf], check: bool) -> Result<()> {
+    use walkdir::WalkDir;
+
+    let mut files_to_format = Vec::new();
+
+    for path in paths {
+        if path.is_file() {
+            if path.extension().map_or(false, |e| e == "sg") {
+                files_to_format.push(path.clone());
+            }
+        } else if path.is_dir() {
+            for entry in WalkDir::new(path)
+                .into_iter()
+                .filter_map(|e| e.ok())
+                .filter(|e| e.path().extension().map_or(false, |ext| ext == "sg"))
+            {
+                files_to_format.push(entry.path().to_path_buf());
+            }
+        } else {
+            eprintln!("Warning: {} is not a file or directory", path.display());
+        }
+    }
+
+    if files_to_format.is_empty() {
+        println!("No .sg files found");
+        return Ok(());
+    }
+
+    let mut any_changed = false;
+    let mut any_errors = false;
+
+    for file_path in &files_to_format {
+        match format_file(file_path, check) {
+            Ok(changed) => {
+                if changed {
+                    any_changed = true;
+                    if check {
+                        println!("Would reformat: {}", file_path.display());
+                    } else {
+                        println!("Formatted: {}", file_path.display());
+                    }
+                }
+            }
+            Err(e) => {
+                any_errors = true;
+                eprintln!("Error formatting {}: {}", file_path.display(), e);
+            }
+        }
+    }
+
+    if check && any_changed {
+        miette::bail!("Some files need formatting. Run `sage fmt` to fix.");
+    }
+
+    if any_errors {
+        miette::bail!("Some files had errors and could not be formatted.");
+    }
+
+    if !any_changed && !check {
+        println!("All files already formatted.");
+    }
+
+    Ok(())
+}
+
+/// Format a single file. Returns true if the file changed (or would change in check mode).
+fn format_file(path: &Path, check: bool) -> Result<bool> {
+    use sage_parser::{format, lex, parse};
+
+    let source = fs::read_to_string(path)
+        .into_diagnostic()
+        .wrap_err_with(|| format!("Failed to read {}", path.display()))?;
+
+    let lex_result = lex(&source).map_err(|e| miette::miette!("Lex error: {}", e))?;
+    let source_arc: Arc<str> = Arc::from(source.as_str());
+    let (program, parse_errors) = parse(lex_result.tokens(), source_arc);
+
+    if !parse_errors.is_empty() {
+        for err in &parse_errors {
+            eprintln!("{}", err);
+        }
+        miette::bail!("Parse errors in {}", path.display());
+    }
+
+    let program = program.ok_or_else(|| miette::miette!("Failed to parse {}", path.display()))?;
+
+    let formatted = format(&program);
+
+    // Normalise trailing newline for comparison
+    let source_normalised = source.trim_end();
+    let formatted_normalised = formatted.trim_end();
+
+    if source_normalised == formatted_normalised {
+        return Ok(false);
+    }
+
+    if !check {
+        fs::write(path, &formatted)
+            .into_diagnostic()
+            .wrap_err_with(|| format!("Failed to write {}", path.display()))?;
+    }
+
+    Ok(true)
 }

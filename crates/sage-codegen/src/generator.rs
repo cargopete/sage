@@ -817,7 +817,7 @@ serde_json = "1"
             match &handler.event {
                 EventKind::Start => {
                     self.emit
-                        .write("async fn on_start(self, ctx: &mut AgentContext<");
+                        .write("async fn on_start(&self, ctx: &mut AgentContext<");
                     self.emit.write(&output_type);
                     self.emit.write(">) -> SageResult<");
                     self.emit.write(&output_type);
@@ -830,7 +830,7 @@ serde_json = "1"
 
                 // RFC-0007: Generate on_error handler
                 EventKind::Error { param_name } => {
-                    self.emit.write("async fn on_error(self, ");
+                    self.emit.write("async fn on_error(&self, ");
                     self.emit.write(&param_name.name);
                     self.emit.write(": SageError, ctx: &mut AgentContext<");
                     self.emit.write(&output_type);
@@ -843,7 +843,17 @@ serde_json = "1"
                     self.emit.writeln("}");
                 }
 
-                // Other handlers (message, stop) - future work
+                // on stop handler - cleanup before termination
+                EventKind::Stop => {
+                    self.emit
+                        .writeln("async fn on_stop(&self) {");
+                    self.emit.indent();
+                    self.generate_block_contents(&handler.body);
+                    self.emit.dedent();
+                    self.emit.writeln("}");
+                }
+
+                // Other handlers (message) - future work
                 _ => {}
             }
         }
@@ -859,6 +869,11 @@ serde_json = "1"
             .iter()
             .any(|h| matches!(h.event, EventKind::Error { .. }));
 
+        let has_stop_handler = agent
+            .handlers
+            .iter()
+            .any(|h| matches!(h.event, EventKind::Stop));
+
         // RFC-0011: Check if agent uses tools
         let has_tools = !agent.tool_uses.is_empty();
 
@@ -866,6 +881,10 @@ serde_json = "1"
         self.emit
             .writeln("async fn main() -> Result<(), Box<dyn std::error::Error>> {");
         self.emit.indent();
+
+        // Initialize tracing from environment variables
+        self.emit.writeln("sage_runtime::trace::init();");
+        self.emit.writeln("");
 
         // Helper to generate agent construction (with or without tool fields)
         let agent_construct = if has_tools {
@@ -886,38 +905,80 @@ serde_json = "1"
             entry_agent.to_string()
         };
 
+        // Set up graceful shutdown signal handling
+        self.emit
+            .writeln("let ctrl_c = async { tokio::signal::ctrl_c().await.ok() };");
+
+        self.emit.writeln("#[cfg(unix)]");
+        self.emit.writeln("let terminate = async {");
+        self.emit.indent();
+        self.emit.writeln(
+            "if let Ok(mut s) = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {",
+        );
+        self.emit.indent();
+        self.emit.writeln("s.recv().await;");
+        self.emit.dedent();
+        self.emit.writeln("} else {");
+        self.emit.indent();
+        self.emit.writeln("std::future::pending::<()>().await;");
+        self.emit.dedent();
+        self.emit.writeln("}");
+        self.emit.dedent();
+        self.emit.writeln("};");
+        self.emit.writeln("#[cfg(not(unix))]");
+        self.emit.writeln("let terminate = std::future::pending::<()>();");
+        self.emit.writeln("");
+
+        self.emit
+            .writeln("let handle = sage_runtime::spawn(|mut ctx| async move {");
+        self.emit.indent();
+        self.emit.write("let agent = ");
+        self.emit.write(&agent_construct);
+        self.emit.writeln(";");
+
         if has_error_handler {
             // RFC-0007: Generate error dispatch code
-            // Handlers take &mut ctx, so no cloning needed
             self.emit
-                .writeln("let handle = sage_runtime::spawn(|mut ctx| async move {");
-            self.emit.indent();
-            self.emit.write("let agent = ");
-            self.emit.write(&agent_construct);
-            self.emit.writeln(";");
-            self.emit.writeln("match agent.on_start(&mut ctx).await {");
+                .writeln("let result = match agent.on_start(&mut ctx).await {");
             self.emit.indent();
             self.emit.writeln("Ok(result) => Ok(result),");
-            self.emit.write("Err(e) => ");
-            self.emit.write(&agent_construct);
-            self.emit.writeln(".on_error(e, &mut ctx).await,");
+            self.emit.writeln("Err(e) => agent.on_error(e, &mut ctx).await,");
             self.emit.dedent();
-            self.emit.writeln("}");
-            self.emit.dedent();
-            self.emit.writeln("});");
+            self.emit.writeln("};");
         } else {
             // Simple case: no error handler
-            // Use async move to ensure ctx ownership is moved into the future
             self.emit
-                .writeln("let handle = sage_runtime::spawn(|mut ctx| async move {");
-            self.emit.indent();
-            self.emit.write(&agent_construct);
-            self.emit.writeln(".on_start(&mut ctx).await");
-            self.emit.dedent();
-            self.emit.writeln("});");
+                .writeln("let result = agent.on_start(&mut ctx).await;");
         }
 
-        self.emit.writeln("let result = handle.result().await?;");
+        if has_stop_handler {
+            // Call on_stop for cleanup (errors are ignored)
+            self.emit.writeln("agent.on_stop().await;");
+        }
+
+        self.emit.writeln("result");
+        self.emit.dedent();
+        self.emit.writeln("});");
+
+        // Use tokio::select! to race between agent completion and shutdown signals
+        self.emit.writeln("");
+        self.emit.writeln("let result = tokio::select! {");
+        self.emit.indent();
+        self.emit.writeln("result = handle.result() => result?,");
+        self.emit.writeln("_ = ctrl_c => {");
+        self.emit.indent();
+        self.emit.writeln("eprintln!(\"\\nReceived interrupt signal, shutting down...\");");
+        self.emit.writeln("std::process::exit(0);");
+        self.emit.dedent();
+        self.emit.writeln("}");
+        self.emit.writeln("_ = terminate => {");
+        self.emit.indent();
+        self.emit.writeln("eprintln!(\"Received terminate signal, shutting down...\");");
+        self.emit.writeln("std::process::exit(0);");
+        self.emit.dedent();
+        self.emit.writeln("}");
+        self.emit.dedent();
+        self.emit.writeln("};");
         self.emit.writeln("println!(\"{:?}\", result);");
         self.emit.writeln("Ok(())");
 
@@ -1536,9 +1597,24 @@ serde_json = "1"
                 }
             }
 
-            Expr::Await { handle, .. } => {
-                self.generate_expr(handle);
-                self.emit.write(".result().await?");
+            Expr::Await {
+                handle, timeout, ..
+            } => {
+                if let Some(timeout_expr) = timeout {
+                    // With timeout: wrap in tokio::time::timeout
+                    self.emit.write("tokio::time::timeout(");
+                    self.emit.write("std::time::Duration::from_millis(");
+                    self.generate_expr(timeout_expr);
+                    self.emit.write(" as u64), ");
+                    self.generate_expr(handle);
+                    self.emit
+                        .write(".result()).await.map_err(|_| sage_runtime::SageError::agent(");
+                    self.emit.write("\"await timed out\"))??");
+                } else {
+                    // Without timeout: simple await
+                    self.generate_expr(handle);
+                    self.emit.write(".result().await?");
+                }
             }
 
             Expr::Send {
@@ -1636,6 +1712,91 @@ serde_json = "1"
 
                 self.emit.dedent();
                 self.emit.write("}");
+            }
+
+            // fail expression - explicit error raising
+            Expr::Fail { error, .. } => {
+                // Generate: return Err(SageError::agent(msg))
+                // TODO: Use SageError::user once runtime 0.6.1 is published
+                self.emit.write("return Err(sage_runtime::SageError::agent(");
+                self.generate_expr(error);
+                self.emit.write("))");
+            }
+
+            // retry expression - retry a fallible operation
+            Expr::Retry {
+                count,
+                delay,
+                on_errors: _,
+                body,
+                ..
+            } => {
+                // Generate a retry loop with async block
+                self.emit.writeln("'_retry: {");
+                self.emit.indent();
+
+                self.emit.write("let _retry_max: i64 = ");
+                self.generate_expr(count);
+                self.emit.writeln(";");
+
+                if let Some(delay_expr) = delay {
+                    self.emit.write("let _retry_delay: u64 = ");
+                    self.generate_expr(delay_expr);
+                    self.emit.writeln(" as u64;");
+                }
+
+                self.emit
+                    .writeln("let mut _last_error: Option<sage_runtime::SageError> = None;");
+                self.emit.writeln("for _attempt in 0.._retry_max {");
+                self.emit.indent();
+
+                // Wrap body in async block that returns Result
+                self.emit.writeln("let _result = (async {");
+                self.emit.indent();
+                self.emit.write("Ok::<_, sage_runtime::SageError>(");
+                self.generate_expr(body);
+                self.emit.writeln(")");
+                self.emit.dedent();
+                self.emit.writeln("}).await;");
+
+                self.emit.writeln("match _result {");
+                self.emit.indent();
+                self.emit.writeln("Ok(v) => break '_retry v,");
+                self.emit.writeln("Err(e) => {");
+                self.emit.indent();
+                self.emit.writeln("_last_error = Some(e);");
+
+                // Add delay between retries if specified
+                if delay.is_some() {
+                    self.emit.writeln("if _attempt < _retry_max - 1 {");
+                    self.emit.indent();
+                    self.emit.writeln(
+                        "tokio::time::sleep(std::time::Duration::from_millis(_retry_delay)).await;",
+                    );
+                    self.emit.dedent();
+                    self.emit.writeln("}");
+                }
+
+                self.emit.dedent();
+                self.emit.writeln("}");
+                self.emit.dedent();
+                self.emit.writeln("}");
+
+                self.emit.dedent();
+                self.emit.writeln("}");
+
+                // After loop exhausted, return the last error
+                self.emit.writeln("return Err(_last_error.unwrap());");
+
+                self.emit.dedent();
+                self.emit.write("}");
+            }
+
+            // trace(message) - emit a trace event
+            Expr::Trace { message, .. } => {
+                self.emit.write("sage_runtime::trace::user(&");
+                self.generate_expr(message);
+                self.emit.write(")");
             }
 
             // RFC-0009: Closures
@@ -2432,8 +2593,8 @@ run Main;
         "#;
 
         let output = generate_source(source);
-        // Should generate on_error method with &mut ctx
-        assert!(output.contains("async fn on_error(self, e: SageError, ctx: &mut AgentContext"));
+        // Should generate on_error method with &self and &mut ctx
+        assert!(output.contains("async fn on_error(&self, e: SageError, ctx: &mut AgentContext"));
         // Main should dispatch to on_error on failure with &mut ctx
         assert!(output.contains(".on_error(e, &mut ctx)"));
     }

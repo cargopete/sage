@@ -362,6 +362,16 @@ pub enum CheckError {
         span: SourceSpan,
     },
 
+    #[error("`emit` cannot be called in `on stop` handler")]
+    #[diagnostic(
+        code(sage::E017),
+        help("Oswyn suggests: remove the emit call - on stop is for cleanup only")
+    )]
+    EmitInStopHandler {
+        #[label("emit not allowed in stop handler")]
+        span: SourceSpan,
+    },
+
     // =========================================================================
     // RFC-0009: Closure errors
     // =========================================================================
@@ -841,6 +851,13 @@ impl CheckError {
     pub fn missing_error_handler(agent: impl Into<String>, span: &Span) -> Self {
         Self::MissingErrorHandler {
             agent: agent.into(),
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create an emit in stop handler error (E017).
+    pub fn emit_in_stop_handler(span: &Span) -> Self {
+        Self::EmitInStopHandler {
             span: to_source_span(span),
         }
     }

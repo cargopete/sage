@@ -22,6 +22,8 @@ pub enum ErrorKind {
     Runtime,
     /// RFC-0011: Error from tool execution (Http, Fs, etc.).
     Tool,
+    /// User-raised error via `fail` expression.
+    User,
 }
 
 impl std::fmt::Display for ErrorKind {
@@ -31,6 +33,7 @@ impl std::fmt::Display for ErrorKind {
             ErrorKind::Agent => write!(f, "Agent"),
             ErrorKind::Runtime => write!(f, "Runtime"),
             ErrorKind::Tool => write!(f, "Tool"),
+            ErrorKind::User => write!(f, "User"),
         }
     }
 }
@@ -68,6 +71,10 @@ pub enum SageError {
     /// RFC-0011: Error from tool execution.
     #[error("Tool error: {0}")]
     Tool(String),
+
+    /// User-raised error via `fail` expression.
+    #[error("{0}")]
+    User(String),
 }
 
 impl SageError {
@@ -90,6 +97,7 @@ impl SageError {
             SageError::Type { .. } => ErrorKind::Runtime,
             // RFC-0011: Http errors are tool errors
             SageError::Http(_) | SageError::Tool(_) => ErrorKind::Tool,
+            SageError::User(_) => ErrorKind::User,
         }
     }
 
@@ -118,6 +126,12 @@ impl SageError {
     #[must_use]
     pub fn tool(msg: impl Into<String>) -> Self {
         SageError::Tool(msg.into())
+    }
+
+    /// Create a user error via `fail` expression.
+    #[must_use]
+    pub fn user(msg: impl Into<String>) -> Self {
+        SageError::User(msg.into())
     }
 }
 
