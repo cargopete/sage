@@ -7,7 +7,7 @@ class Sage < Formula
   on_macos do
     on_arm do
       url "https://github.com/sagelang/sage/releases/download/v1.0.4/sage-v1.0.4-aarch64-apple-darwin.tar.gz"
-      sha256 "6924c28cc87c82cd9c695552b8d782a894bf37c4c7844c50f68651ac3e933bdb"
+      sha256 "2c3b9b655060406f667018b7b9d015e27b92f644e7fe119b62b7860393f233fb"
     end
   end
 
