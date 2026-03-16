@@ -36,7 +36,7 @@ fn default_version() -> String {
     "0.1.0".to_string()
 }
 
-/// Resolve all dependencies from a project's sage.toml.
+/// Resolve all dependencies from a project's grove.toml.
 pub fn resolve_dependencies(
     project_root: &Path,
     deps: &HashMap<String, DependencySpec>,
@@ -78,7 +78,7 @@ pub fn resolve_dependencies(
     };
 
     // Save lock file
-    let lock_path = project_root.join("sage.lock");
+    let lock_path = project_root.join("grove.lock");
     lock_file.save(&lock_path)?;
 
     Ok(ResolvedPackages {
@@ -323,7 +323,7 @@ impl<'a> Resolver<'a> {
     }
 
     fn read_manifest(&self, path: &Path, name: &str) -> Result<PackageManifest, PackageError> {
-        let manifest_path = path.join("sage.toml");
+        let manifest_path = path.join("grove.toml");
         let contents =
             std::fs::read_to_string(&manifest_path).map_err(|e| PackageError::IoError {
                 message: format!("failed to read manifest for '{name}'"),

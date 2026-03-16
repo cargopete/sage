@@ -56,7 +56,7 @@ pub enum LoadError {
     },
 
     /// Invalid manifest file.
-    #[error("invalid sage.toml")]
+    #[error("invalid grove.toml")]
     #[diagnostic(code(sage::loader::invalid_manifest))]
     InvalidManifest {
         path: PathBuf,
@@ -69,8 +69,8 @@ pub enum LoadError {
     #[diagnostic(code(sage::loader::missing_entry))]
     MissingEntry { path: PathBuf },
 
-    /// No sage.toml found when expected.
-    #[error("no sage.toml found in '{dir}' or parent directories")]
+    /// No grove.toml found when expected.
+    #[error("no grove.toml found in '{dir}' or parent directories")]
     #[diagnostic(code(sage::loader::no_manifest))]
     NoManifest { dir: PathBuf },
 

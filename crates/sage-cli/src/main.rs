@@ -54,7 +54,7 @@ enum Commands {
 
     /// Compile and run a Sage program
     Run {
-        /// Path to the .sg file (defaults to entry in sage.toml or src/main.sg)
+        /// Path to the .sg file (defaults to entry in grove.toml or src/main.sg)
         file: Option<PathBuf>,
 
         /// Build in release mode
@@ -76,7 +76,7 @@ enum Commands {
 
     /// Compile a Sage program to a native binary
     Build {
-        /// Path to the .sg file (defaults to entry in sage.toml or src/main.sg)
+        /// Path to the .sg file (defaults to entry in grove.toml or src/main.sg)
         file: Option<PathBuf>,
 
         /// Build in release mode
@@ -94,7 +94,7 @@ enum Commands {
 
     /// Check a Sage program for errors without running it
     Check {
-        /// Path to the .sg file (defaults to entry in sage.toml or src/main.sg)
+        /// Path to the .sg file (defaults to entry in grove.toml or src/main.sg)
         file: Option<PathBuf>,
     },
 
@@ -130,7 +130,7 @@ enum Commands {
         package: String,
     },
 
-    /// Install dependencies from sage.toml
+    /// Install dependencies from grove.toml
     Install,
 
     /// Update dependencies
@@ -332,23 +332,31 @@ fn print_banner() {
     println!();
 }
 
-/// Resolve the entry file path, defaulting to sage.toml entry or src/main.sg.
+/// Resolve the entry file path, defaulting to grove.toml entry or src/main.sg.
 fn resolve_entry_file(file: Option<PathBuf>) -> Result<PathBuf> {
     if let Some(f) = file {
         return Ok(f);
     }
 
-    // Look for sage.toml in current directory
-    let manifest_path = PathBuf::from("sage.toml");
+    // Look for grove.toml in current directory (or sage.toml for backwards compatibility)
+    let manifest_path = if PathBuf::from("grove.toml").exists() {
+        PathBuf::from("grove.toml")
+    } else if PathBuf::from("sage.toml").exists() {
+        eprintln!("warning: sage.toml is deprecated, rename to grove.toml");
+        PathBuf::from("sage.toml")
+    } else {
+        PathBuf::from("grove.toml") // Will fail below if neither exists
+    };
+
     if manifest_path.exists() {
         let contents = std::fs::read_to_string(&manifest_path)
             .into_diagnostic()
-            .wrap_err("Failed to read sage.toml")?;
+            .wrap_err("Failed to read grove.toml")?;
 
         let doc = contents
             .parse::<toml_edit::DocumentMut>()
             .into_diagnostic()
-            .wrap_err("Failed to parse sage.toml")?;
+            .wrap_err("Failed to parse grove.toml")?;
 
         // Try to get entry from [project] table
         if let Some(project) = doc.get("project") {
@@ -859,17 +867,17 @@ fn cmd_new(name: &str) -> Result<()> {
         .into_diagnostic()
         .wrap_err("Failed to create project directory")?;
 
-    // Create sage.toml (with entry field per RFC-0013)
-    let sage_toml = format!(
+    // Create grove.toml (with entry field per RFC-0013)
+    let grove_toml = format!(
         r#"[project]
 name = "{name}"
 version = "0.1.0"
 entry = "src/main.sg"
 "#
     );
-    std::fs::write(project_dir.join("sage.toml"), sage_toml)
+    std::fs::write(project_dir.join("grove.toml"), grove_toml)
         .into_diagnostic()
-        .wrap_err("Failed to write sage.toml")?;
+        .wrap_err("Failed to write grove.toml")?;
 
     // Create src/main.sg
     let main_sg = r#"// Your first Sage agent
@@ -921,7 +929,7 @@ sage run .
 
 ## Project Structure
 
-- `sage.toml` - Project configuration
+- `grove.toml` - Project configuration
 - `src/main.sg` - Main entry point
 "#
     );
@@ -941,7 +949,7 @@ sage run .
     println!("  {}", style(format!("{}/", name)).dim());
     println!("  ├── {}", style(".gitignore").dim());
     println!("  ├── {}", style("README.md").yellow());
-    println!("  ├── {}", style("sage.toml").yellow());
+    println!("  ├── {}", style("grove.toml").yellow());
     println!("  └── {}", style("src/").dim());
     println!("      └── {}", style("main.sg").yellow());
     println!();
@@ -973,7 +981,7 @@ fn is_valid_project_name(name: &str) -> bool {
 // Package management commands
 // =============================================================================
 
-/// Add a package dependency to sage.toml.
+/// Add a package dependency to grove.toml.
 fn cmd_add(
     package: &str,
     git: Option<String>,
@@ -997,21 +1005,25 @@ fn cmd_add(
         }
     }
 
-    // Find or create sage.toml
-    let manifest_path = PathBuf::from("sage.toml");
-    if !manifest_path.exists() {
-        miette::bail!("No sage.toml found. Run this command from a Sage project directory.");
-    }
+    // Find grove.toml (or sage.toml for backwards compatibility)
+    let manifest_path = if PathBuf::from("grove.toml").exists() {
+        PathBuf::from("grove.toml")
+    } else if PathBuf::from("sage.toml").exists() {
+        eprintln!("warning: sage.toml is deprecated, rename to grove.toml");
+        PathBuf::from("sage.toml")
+    } else {
+        miette::bail!("No grove.toml found. Run this command from a Sage project directory.");
+    };
 
     // Read and parse the manifest
     let contents = std::fs::read_to_string(&manifest_path)
         .into_diagnostic()
-        .wrap_err("Failed to read sage.toml")?;
+        .wrap_err("Failed to read grove.toml")?;
 
     let mut doc = contents
         .parse::<toml_edit::DocumentMut>()
         .into_diagnostic()
-        .wrap_err("Failed to parse sage.toml")?;
+        .wrap_err("Failed to parse grove.toml")?;
 
     // Ensure [dependencies] table exists
     if doc.get("dependencies").is_none() {
@@ -1043,7 +1055,7 @@ fn cmd_add(
     // Write back
     std::fs::write(&manifest_path, doc.to_string())
         .into_diagnostic()
-        .wrap_err("Failed to write sage.toml")?;
+        .wrap_err("Failed to write grove.toml")?;
 
     if let Some(p) = &path {
         println!(
@@ -1081,21 +1093,26 @@ fn cmd_add(
     Ok(())
 }
 
-/// Remove a package dependency from sage.toml.
+/// Remove a package dependency from grove.toml.
 fn cmd_remove(package: &str) -> Result<()> {
-    let manifest_path = PathBuf::from("sage.toml");
-    if !manifest_path.exists() {
-        miette::bail!("No sage.toml found.");
-    }
+    // Find grove.toml (or sage.toml for backwards compatibility)
+    let manifest_path = if PathBuf::from("grove.toml").exists() {
+        PathBuf::from("grove.toml")
+    } else if PathBuf::from("sage.toml").exists() {
+        eprintln!("warning: sage.toml is deprecated, rename to grove.toml");
+        PathBuf::from("sage.toml")
+    } else {
+        miette::bail!("No grove.toml found.");
+    };
 
     let contents = std::fs::read_to_string(&manifest_path)
         .into_diagnostic()
-        .wrap_err("Failed to read sage.toml")?;
+        .wrap_err("Failed to read grove.toml")?;
 
     let mut doc = contents
         .parse::<toml_edit::DocumentMut>()
         .into_diagnostic()
-        .wrap_err("Failed to parse sage.toml")?;
+        .wrap_err("Failed to parse grove.toml")?;
 
     // Check if package exists
     let deps = doc.get_mut("dependencies").and_then(|d| d.as_table_mut());
@@ -1103,7 +1120,7 @@ fn cmd_remove(package: &str) -> Result<()> {
         if deps.remove(package).is_some() {
             std::fs::write(&manifest_path, doc.to_string())
                 .into_diagnostic()
-                .wrap_err("Failed to write sage.toml")?;
+                .wrap_err("Failed to write grove.toml")?;
 
             println!(
                 "{} removed {}",
@@ -1117,15 +1134,20 @@ fn cmd_remove(package: &str) -> Result<()> {
     miette::bail!("Package '{}' not found in dependencies", package);
 }
 
-/// Install dependencies from sage.toml.
+/// Install dependencies from grove.toml.
 fn cmd_install() -> Result<()> {
     use sage_loader::ProjectManifest;
     use sage_package::{install_from_lock, resolve_dependencies};
 
-    let manifest_path = PathBuf::from("sage.toml");
-    if !manifest_path.exists() {
-        miette::bail!("No sage.toml found.");
-    }
+    // Find grove.toml (or sage.toml for backwards compatibility)
+    let manifest_path = if PathBuf::from("grove.toml").exists() {
+        PathBuf::from("grove.toml")
+    } else if PathBuf::from("sage.toml").exists() {
+        eprintln!("warning: sage.toml is deprecated, rename to grove.toml");
+        PathBuf::from("sage.toml")
+    } else {
+        miette::bail!("No grove.toml found.");
+    };
 
     let manifest = ProjectManifest::load(&manifest_path).map_err(|e| miette::miette!("{}", e))?;
 
@@ -1144,13 +1166,13 @@ fn cmd_install() -> Result<()> {
     );
 
     let project_root = PathBuf::from(".");
-    let lock_path = project_root.join("sage.lock");
+    let lock_path = project_root.join("grove.lock");
 
     let resolved = if lock_path.exists() {
         let lock = LockFile::load(&lock_path).map_err(|e| miette::miette!("{}", e))?;
         if sage_package::check_lock_freshness(&deps, &lock) {
             // Use existing lock
-            println!("  Using existing sage.lock");
+            println!("  Using existing grove.lock");
             install_from_lock(&project_root, &lock).map_err(|e| miette::miette!("{}", e))?;
             lock.packages.len()
         } else {
@@ -1185,10 +1207,15 @@ fn cmd_update(package: Option<&str>) -> Result<()> {
     use sage_loader::ProjectManifest;
     use sage_package::resolve_dependencies;
 
-    let manifest_path = PathBuf::from("sage.toml");
-    if !manifest_path.exists() {
-        miette::bail!("No sage.toml found.");
-    }
+    // Find grove.toml (or sage.toml for backwards compatibility)
+    let manifest_path = if PathBuf::from("grove.toml").exists() {
+        PathBuf::from("grove.toml")
+    } else if PathBuf::from("sage.toml").exists() {
+        eprintln!("warning: sage.toml is deprecated, rename to grove.toml");
+        PathBuf::from("sage.toml")
+    } else {
+        miette::bail!("No grove.toml found.");
+    };
 
     let manifest = ProjectManifest::load(&manifest_path).map_err(|e| miette::miette!("{}", e))?;
 

@@ -21,11 +21,11 @@ pub enum PackageError {
         requirer_b: String,
     },
 
-    /// E031: Package name in sage add doesn't match package's sage.toml.
+    /// E031: Package name in sage add doesn't match package's grove.toml.
     #[error("package name mismatch: expected '{expected}', found '{found}'")]
     #[diagnostic(
         code(E031),
-        help("Oswyn explains: the package declares its name as '{found}' in sage.toml")
+        help("Oswyn explains: the package declares its name as '{found}' in grove.toml")
     )]
     PackageNameMismatch { expected: String, found: String },
 
@@ -58,7 +58,7 @@ pub enum PackageError {
     #[diagnostic(code(E035), help("Oswyn explains: {reason}"))]
     GitFetchFailed { url: String, reason: String },
 
-    /// Invalid dependency specification in sage.toml.
+    /// Invalid dependency specification in grove.toml.
     #[error("invalid dependency specification for '{package}'")]
     #[diagnostic(
         code(sage::package::invalid_dep),
@@ -81,7 +81,7 @@ pub enum PackageError {
     },
 
     /// Failed to parse package manifest.
-    #[error("invalid sage.toml in '{package}'")]
+    #[error("invalid grove.toml in '{package}'")]
     #[diagnostic(code(sage::package::invalid_manifest))]
     InvalidManifest {
         package: String,
@@ -89,8 +89,8 @@ pub enum PackageError {
         source: toml::de::Error,
     },
 
-    /// Lock file is stale (sage.toml changed).
-    #[error("sage.lock is out of date")]
+    /// Lock file is stale (grove.toml changed).
+    #[error("grove.lock is out of date")]
     #[diagnostic(
         code(sage::package::stale_lock),
         help("Oswyn suggests: run `sage install` to update")
@@ -98,7 +98,7 @@ pub enum PackageError {
     StaleLockFile,
 
     /// Failed to parse lock file.
-    #[error("invalid sage.lock")]
+    #[error("invalid grove.lock")]
     #[diagnostic(code(sage::package::invalid_lock))]
     InvalidLockFile {
         #[source]

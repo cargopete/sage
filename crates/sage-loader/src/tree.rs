@@ -105,15 +105,25 @@ pub fn load_single_file(path: &Path) -> Result<ModuleTree, Vec<LoadError>> {
     })
 }
 
-/// Load a project from a sage.toml or project directory.
+/// Load a project from a grove.toml or project directory.
 ///
 /// This does NOT resolve external dependencies. For that, use `load_project_with_packages`.
 pub fn load_project(project_path: &Path) -> Result<ModuleTree, Vec<LoadError>> {
     // Find the manifest
-    let manifest_path = if project_path.is_file() && project_path.ends_with("sage.toml") {
+    let manifest_path = if project_path.is_file() && project_path.ends_with("grove.toml") {
         project_path.to_path_buf()
     } else if project_path.is_dir() {
-        project_path.join("sage.toml")
+        // Try grove.toml first, fall back to sage.toml with deprecation warning
+        let grove_path = project_path.join("grove.toml");
+        let sage_path = project_path.join("sage.toml");
+        if grove_path.exists() {
+            grove_path
+        } else if sage_path.exists() {
+            eprintln!("warning: sage.toml is deprecated, rename to grove.toml");
+            sage_path
+        } else {
+            project_path.join("grove.toml") // Will fail with proper error
+        }
     } else {
         // It's a .sg file - treat as single file
         return load_single_file(project_path);
@@ -163,10 +173,20 @@ pub fn load_project_with_packages(
     use sage_package::{check_lock_freshness, install_from_lock, resolve_dependencies, LockFile};
 
     // First, do the basic project loading to check if it's a valid project
-    let manifest_path = if project_path.is_file() && project_path.ends_with("sage.toml") {
+    let manifest_path = if project_path.is_file() && project_path.ends_with("grove.toml") {
         project_path.to_path_buf()
     } else if project_path.is_dir() {
-        project_path.join("sage.toml")
+        // Try grove.toml first, fall back to sage.toml with deprecation warning
+        let grove_path = project_path.join("grove.toml");
+        let sage_path = project_path.join("sage.toml");
+        if grove_path.exists() {
+            grove_path
+        } else if sage_path.exists() {
+            eprintln!("warning: sage.toml is deprecated, rename to grove.toml");
+            sage_path
+        } else {
+            project_path.join("grove.toml") // Will fail with proper error
+        }
     } else {
         // Single file - no packages
         let tree = load_single_file(project_path)?;
@@ -193,7 +213,7 @@ pub fn load_project_with_packages(
     let external_roots = if deps.is_empty() {
         HashMap::new()
     } else {
-        let lock_path = project_root.join("sage.lock");
+        let lock_path = project_root.join("grove.lock");
         let packages = if lock_path.exists() {
             let lock = LockFile::load(&lock_path)
                 .map_err(|e| vec![LoadError::PackageError { source: e }])?;
@@ -540,9 +560,9 @@ run Main;
     fn load_project_with_manifest() {
         let dir = TempDir::new().unwrap();
 
-        // Create sage.toml
+        // Create grove.toml
         fs::write(
-            dir.path().join("sage.toml"),
+            dir.path().join("grove.toml"),
             r#"
 [project]
 name = "test"
@@ -574,9 +594,9 @@ run Main;
     fn load_project_with_submodule() {
         let dir = TempDir::new().unwrap();
 
-        // Create sage.toml
+        // Create grove.toml
         fs::write(
-            dir.path().join("sage.toml"),
+            dir.path().join("grove.toml"),
             r#"
 [project]
 name = "test"

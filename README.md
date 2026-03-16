@@ -185,13 +185,13 @@ Sage supports multi-file projects with a familiar module system:
 
 ```
 my_project/
-├── sage.toml           # Project manifest
+├── grove.toml          # Project manifest
 └── src/
     ├── main.sg         # Entry point
     └── agents.sg       # Agent definitions
 ```
 
-**sage.toml:**
+**grove.toml:**
 ```toml
 [project]
 name = "my_project"
@@ -689,7 +689,7 @@ Run a Sage program:
 # Single file
 sage run examples/hello.sg
 
-# Project directory (looks for sage.toml)
+# Project directory (looks for grove.toml)
 sage run my_project/
 
 # With real LLM (requires SAGE_API_KEY)

@@ -1,4 +1,4 @@
-//! Project manifest (sage.toml) parsing.
+//! Project manifest (grove.toml) parsing.
 
 use crate::error::LoadError;
 use sage_package::{parse_dependencies, DependencySpec};
@@ -6,7 +6,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-/// A Sage project manifest (sage.toml).
+/// A Sage project manifest (grove.toml).
 #[derive(Debug, Clone, Deserialize)]
 pub struct ProjectManifest {
     pub project: ProjectConfig,
@@ -16,7 +16,7 @@ pub struct ProjectManifest {
     pub test: TestConfig,
 }
 
-/// The [test] section of sage.toml.
+/// The [test] section of grove.toml.
 #[derive(Debug, Clone, Deserialize)]
 pub struct TestConfig {
     /// Test timeout in milliseconds (default: 10000)
@@ -36,7 +36,7 @@ fn default_timeout_ms() -> u64 {
     10_000 // 10 seconds
 }
 
-/// The [project] section of sage.toml.
+/// The [project] section of grove.toml.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ProjectConfig {
     pub name: String,
@@ -55,7 +55,7 @@ fn default_entry() -> PathBuf {
 }
 
 impl ProjectManifest {
-    /// Load a manifest from a sage.toml file.
+    /// Load a manifest from a grove.toml file.
     pub fn load(path: &Path) -> Result<Self, LoadError> {
         let contents = std::fs::read_to_string(path).map_err(|e| LoadError::IoError {
             path: path.to_path_buf(),
@@ -68,13 +68,20 @@ impl ProjectManifest {
         })
     }
 
-    /// Find a sage.toml file by searching upward from the given directory.
+    /// Find a grove.toml file by searching upward from the given directory.
+    /// Falls back to sage.toml for backwards compatibility.
     pub fn find(start_dir: &Path) -> Option<PathBuf> {
         let mut current = start_dir.to_path_buf();
         loop {
-            let manifest_path = current.join("sage.toml");
-            if manifest_path.exists() {
-                return Some(manifest_path);
+            // Try grove.toml first
+            let grove_path = current.join("grove.toml");
+            if grove_path.exists() {
+                return Some(grove_path);
+            }
+            // Fall back to sage.toml (deprecated)
+            let sage_path = current.join("sage.toml");
+            if sage_path.exists() {
+                return Some(sage_path);
             }
             if !current.pop() {
                 return None;

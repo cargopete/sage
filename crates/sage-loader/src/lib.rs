@@ -2,7 +2,7 @@
 //!
 //! This crate handles:
 //! - Loading single-file programs
-//! - Loading multi-file projects with `sage.toml`
+//! - Loading multi-file projects with `grove.toml`
 //! - Module tree construction from `mod` declarations
 //! - Cycle detection in imports
 

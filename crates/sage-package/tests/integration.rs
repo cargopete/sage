@@ -43,7 +43,7 @@ fn lock_file_roundtrip() {
     };
 
     let dir = TempDir::new().unwrap();
-    let lock_path = dir.path().join("sage.lock");
+    let lock_path = dir.path().join("grove.lock");
 
     lock.save(&lock_path).unwrap();
     let loaded = LockFile::load(&lock_path).unwrap();
@@ -67,7 +67,7 @@ fn lock_file_path_dependency_roundtrip() {
     };
 
     let dir = TempDir::new().unwrap();
-    let lock_path = dir.path().join("sage.lock");
+    let lock_path = dir.path().join("grove.lock");
 
     lock.save(&lock_path).unwrap();
     let loaded = LockFile::load(&lock_path).unwrap();

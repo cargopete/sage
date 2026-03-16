@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-/// A dependency specification from sage.toml.
+/// A dependency specification from grove.toml.
 ///
 /// Can be either a git dependency or a local path dependency.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

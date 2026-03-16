@@ -1,8 +1,8 @@
 //! Package manager for Sage.
 //!
 //! This crate handles:
-//! - Parsing `[dependencies]` from `sage.toml`
-//! - Managing `sage.lock` for reproducible builds
+//! - Parsing `[dependencies]` from `grove.toml`
+//! - Managing `grove.lock` for reproducible builds
 //! - Package cache at `~/.sage/packages/<name>/<version>/`
 //! - Git-based dependency resolution
 
