@@ -6432,13 +6432,17 @@ impl<'a> ModuleChecker<'a> {
                 if let sage_parser::InterpExpr::Ident(ident) = base.as_ref() {
                     if ident.name == "self" {
                         if let Some(agent_name) = &self.current_agent {
-                            if let Some(agent) = self.lookup_agent(agent_name) {
-                                if let Some(ty) = agent.beliefs.get(&field.name) {
-                                    return ty.clone();
-                                }
-                                self.errors
-                                    .push(CheckError::undefined_belief(&field.name, span));
+                            // Clone to avoid borrow issues with used_beliefs insert
+                            let belief_ty = self
+                                .lookup_agent(agent_name)
+                                .and_then(|agent| agent.beliefs.get(&field.name).cloned());
+                            if let Some(ty) = belief_ty {
+                                // Track belief usage for unused belief warnings
+                                self.used_beliefs.insert(field.name.clone());
+                                return ty;
                             }
+                            self.errors
+                                .push(CheckError::undefined_belief(&field.name, span));
                         }
                         return Type::Error;
                     }

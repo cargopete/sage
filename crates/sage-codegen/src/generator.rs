@@ -1073,7 +1073,7 @@ serde_json = "1"
 
         // Use tokio::select! to race between agent completion and shutdown signals
         self.emit.writeln("");
-        self.emit.writeln("let result = tokio::select! {");
+        self.emit.writeln("let _result = tokio::select! {");
         self.emit.indent();
         self.emit.writeln("result = handle.result() => result?,");
         self.emit.writeln("_ = ctrl_c => {");
