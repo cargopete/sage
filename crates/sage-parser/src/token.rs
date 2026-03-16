@@ -216,9 +216,12 @@ pub enum Token {
     #[regex(r"-?[0-9]+\.[0-9]+")]
     FloatLit,
 
-    /// String literal (e.g., `"hello"`).
-    /// Supports escape sequences: \n, \t, \r, \\, \"
+    /// String literal (e.g., `"hello"` or `'hello'`).
+    /// Supports escape sequences: \n, \t, \r, \\, \", \'
+    /// Both double and single quotes are allowed. Use single quotes inside
+    /// interpolations when needing string literals: `"Result: {len('hello')}"`
     #[regex(r#""([^"\\]|\\.)*""#)]
+    #[regex(r#"'([^'\\]|\\.)*'"#)]
     StringLit,
 
     // =========================================================================

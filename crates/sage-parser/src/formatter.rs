@@ -979,32 +979,14 @@ impl Formatter {
                         }
                     }
                 }
-                StringPart::Interpolation(interp) => {
+                StringPart::Interpolation(expr) => {
                     self.write("{");
-                    self.format_interp_expr(interp);
+                    self.format_expr(expr);
                     self.write("}");
                 }
             }
         }
         self.write("\"");
-    }
-
-    fn format_interp_expr(&mut self, interp: &InterpExpr) {
-        match interp {
-            InterpExpr::Ident(ident) => {
-                self.write(&ident.name);
-            }
-            InterpExpr::FieldAccess { base, field, .. } => {
-                self.format_interp_expr(base);
-                self.write(".");
-                self.write(&field.name);
-            }
-            InterpExpr::TupleIndex { base, index, .. } => {
-                self.format_interp_expr(base);
-                self.write(".");
-                let _ = write!(self.output, "{}", index);
-            }
-        }
     }
 
     fn format_match_arm(&mut self, arm: &MatchArm) {

@@ -824,16 +824,10 @@ impl Checker {
                     self.errors.push(CheckError::unhandled_error("infer", span));
                 }
 
-                // Track belief usage in template interpolations
+                // Track belief usage and type-check interpolated expressions
                 for part in &template.parts {
-                    if let sage_parser::StringPart::Interpolation(interp_expr) = part {
-                        // Check the base identifier
-                        let base_ident = interp_expr.base_ident();
-                        if let Some(field) = base_ident.name.strip_prefix("self.") {
-                            self.used_beliefs.insert(field.to_string());
-                        }
-                        // Type-check the interpolation expression
-                        self.check_interp_expr(interp_expr);
+                    if let sage_parser::StringPart::Interpolation(expr) = part {
+                        self.check_expr(expr);
                     }
                 }
                 // infer returns Inferred<T>, default to Inferred<String>
@@ -985,8 +979,8 @@ impl Checker {
             Expr::StringInterp { template, .. } => {
                 // Check all interpolated expressions (RFC-0013)
                 for part in &template.parts {
-                    if let sage_parser::StringPart::Interpolation(interp_expr) = part {
-                        self.check_interp_expr(interp_expr);
+                    if let sage_parser::StringPart::Interpolation(expr) = part {
+                        self.check_expr(expr);
                     }
                 }
                 Type::String
@@ -3002,84 +2996,6 @@ impl Checker {
         }
     }
 
-    /// Check an interpolation expression for type correctness (RFC-0013).
-    fn check_interp_expr(&mut self, expr: &sage_parser::InterpExpr) -> Type {
-        match expr {
-            sage_parser::InterpExpr::Ident(ident) => {
-                // Handle self.field references
-                if let Some(field) = ident.name.strip_prefix("self.") {
-                    if let Some(agent_name) = &self.current_agent {
-                        if let Some(agent) = self.symbols.get_agent(agent_name) {
-                            if let Some(ty) = agent.beliefs.get(field) {
-                                self.used_beliefs.insert(field.to_string());
-                                return ty.clone();
-                            }
-                            self.errors
-                                .push(CheckError::undefined_belief(field, &ident.span));
-                        }
-                    } else {
-                        self.errors.push(CheckError::self_outside_agent(&ident.span));
-                    }
-                    return Type::Error;
-                }
-                // Regular variable reference
-                self.lookup_var(&ident.name, &ident.span)
-            }
-            sage_parser::InterpExpr::FieldAccess { base, field, span } => {
-                // Handle self.field references (when parsed as FieldAccess with base Ident("self"))
-                if let sage_parser::InterpExpr::Ident(ident) = base.as_ref() {
-                    if ident.name == "self" {
-                        if let Some(agent_name) = &self.current_agent {
-                            if let Some(agent) = self.symbols.get_agent(agent_name) {
-                                if let Some(ty) = agent.beliefs.get(&field.name) {
-                                    self.used_beliefs.insert(field.name.clone());
-                                    return ty.clone();
-                                }
-                                self.errors
-                                    .push(CheckError::undefined_belief(&field.name, span));
-                            }
-                        } else {
-                            self.errors.push(CheckError::self_outside_agent(span));
-                        }
-                        return Type::Error;
-                    }
-                }
-                let base_ty = self.check_interp_expr(base);
-                // Look up the field in the base type
-                if let Type::Named(record_name) = &base_ty {
-                    if let Some(record) = self.symbols.get_record(record_name) {
-                        if let Some(field_ty) = record.fields.get(&field.name) {
-                            return field_ty.clone();
-                        }
-                        self.errors.push(CheckError::undefined_record_field(
-                            &field.name,
-                            record_name,
-                            span,
-                        ));
-                    }
-                } else if !base_ty.is_error() {
-                    self.errors
-                        .push(CheckError::field_access_on_non_record(base_ty.to_string(), span));
-                }
-                Type::Error
-            }
-            sage_parser::InterpExpr::TupleIndex { base, index, span } => {
-                let base_ty = self.check_interp_expr(base);
-                if let Type::Tuple(elems) = &base_ty {
-                    if *index < elems.len() {
-                        return elems[*index].clone();
-                    }
-                    self.errors
-                        .push(CheckError::tuple_index_out_of_bounds(*index, elems.len(), span));
-                } else if !base_ty.is_error() {
-                    self.errors
-                        .push(CheckError::field_access_on_non_record(base_ty.to_string(), span));
-                }
-                Type::Error
-            }
-        }
-    }
-
     fn validate_entry_agent(&mut self, program: &Program) {
         // If there's no run statement, this is a library module - no entry validation needed
         let Some(run_agent) = &program.run_agent else {
@@ -4167,13 +4083,8 @@ impl<'a> ModuleChecker<'a> {
             } => {
                 // RFC-0013: Check interpolation expressions
                 for part in &template.parts {
-                    if let sage_parser::StringPart::Interpolation(interp_expr) = part {
-                        let base_ident = interp_expr.base_ident();
-                        if let Some(field) = base_ident.name.strip_prefix("self.") {
-                            self.used_beliefs.insert(field.to_string());
-                        }
-                        // Type-check the interpolation expression
-                        self.check_interp_expr(interp_expr);
+                    if let sage_parser::StringPart::Interpolation(expr) = part {
+                        self.check_expr(expr);
                     }
                 }
                 let inner = result_ty.as_ref().map_or(Type::String, resolve_type);
@@ -4323,8 +4234,8 @@ impl<'a> ModuleChecker<'a> {
             Expr::StringInterp { template, .. } => {
                 // RFC-0013: Check all interpolated expressions
                 for part in &template.parts {
-                    if let sage_parser::StringPart::Interpolation(interp_expr) = part {
-                        self.check_interp_expr(interp_expr);
+                    if let sage_parser::StringPart::Interpolation(expr) = part {
+                        self.check_expr(expr);
                     }
                 }
                 Type::String
@@ -6407,76 +6318,4 @@ impl<'a> ModuleChecker<'a> {
             .map(|v| v as _)
     }
 
-    /// Check an interpolation expression for type correctness (RFC-0013).
-    fn check_interp_expr(&mut self, expr: &sage_parser::InterpExpr) -> Type {
-        match expr {
-            sage_parser::InterpExpr::Ident(ident) => {
-                // Handle self.field references
-                if let Some(field) = ident.name.strip_prefix("self.") {
-                    if let Some(agent_name) = &self.current_agent {
-                        if let Some(agent) = self.lookup_agent(agent_name) {
-                            if let Some(ty) = agent.beliefs.get(field) {
-                                return ty.clone();
-                            }
-                            self.errors
-                                .push(CheckError::undefined_belief(field, &ident.span));
-                        }
-                    }
-                    return Type::Error;
-                }
-                // Regular variable reference
-                self.lookup_var(&ident.name, &ident.span)
-            }
-            sage_parser::InterpExpr::FieldAccess { base, field, span } => {
-                // Handle self.field references (when parsed as FieldAccess with base Ident("self"))
-                if let sage_parser::InterpExpr::Ident(ident) = base.as_ref() {
-                    if ident.name == "self" {
-                        if let Some(agent_name) = &self.current_agent {
-                            // Clone to avoid borrow issues with used_beliefs insert
-                            let belief_ty = self
-                                .lookup_agent(agent_name)
-                                .and_then(|agent| agent.beliefs.get(&field.name).cloned());
-                            if let Some(ty) = belief_ty {
-                                // Track belief usage for unused belief warnings
-                                self.used_beliefs.insert(field.name.clone());
-                                return ty;
-                            }
-                            self.errors
-                                .push(CheckError::undefined_belief(&field.name, span));
-                        }
-                        return Type::Error;
-                    }
-                }
-                let base_ty = self.check_interp_expr(base);
-                // Look up the field in the base type
-                if let Type::Named(record_name) = &base_ty {
-                    if let Some(record) = self.lookup_record(record_name) {
-                        if let Some(field_ty) = record.fields.get(&field.name) {
-                            return field_ty.clone();
-                        }
-                        self.errors
-                            .push(CheckError::unknown_field(&field.name, span));
-                    }
-                } else if !base_ty.is_error() {
-                    self.errors
-                        .push(CheckError::field_access_on_non_record(base_ty.to_string(), span));
-                }
-                Type::Error
-            }
-            sage_parser::InterpExpr::TupleIndex { base, index, span } => {
-                let base_ty = self.check_interp_expr(base);
-                if let Type::Tuple(elems) = &base_ty {
-                    if *index < elems.len() {
-                        return elems[*index].clone();
-                    }
-                    self.errors
-                        .push(CheckError::tuple_index_out_of_bounds(*index, elems.len(), span));
-                } else if !base_ty.is_error() {
-                    self.errors
-                        .push(CheckError::tuple_index_on_non_tuple(base_ty.to_string(), span));
-                }
-                Type::Error
-            }
-        }
-    }
 }

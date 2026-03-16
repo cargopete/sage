@@ -1094,9 +1094,9 @@ impl StringTemplate {
     }
 
     /// Get all interpolation expressions.
-    pub fn interpolations(&self) -> impl Iterator<Item = &InterpExpr> {
+    pub fn interpolations(&self) -> impl Iterator<Item = &Expr> {
         self.parts.iter().filter_map(|p| match p {
-            StringPart::Interpolation(expr) => Some(expr),
+            StringPart::Interpolation(expr) => Some(expr.as_ref()),
             StringPart::Literal(_) => None,
         })
     }
@@ -1108,7 +1108,7 @@ impl fmt::Display for StringTemplate {
         for part in &self.parts {
             match part {
                 StringPart::Literal(s) => write!(f, "{s}")?,
-                StringPart::Interpolation(expr) => write!(f, "{{{expr}}}")?,
+                StringPart::Interpolation(_) => write!(f, "{{...}}")?,
             }
         }
         write!(f, "\"")
@@ -1120,70 +1120,8 @@ impl fmt::Display for StringTemplate {
 pub enum StringPart {
     /// A literal string segment.
     Literal(String),
-    /// An interpolated expression: `{ident}`, `{person.name}`, `{pair.0}`
-    Interpolation(InterpExpr),
-}
-
-/// An interpolation expression within a string template.
-/// Supports simple identifiers, field access chains, and tuple indexing.
-#[derive(Debug, Clone, PartialEq)]
-pub enum InterpExpr {
-    /// Simple identifier: `{name}`
-    Ident(Ident),
-    /// Field access: `{person.name}`, `{record.field.subfield}`
-    FieldAccess {
-        /// The base expression
-        base: Box<InterpExpr>,
-        /// The field being accessed
-        field: Ident,
-        /// Span covering the entire expression
-        span: Span,
-    },
-    /// Tuple index: `{pair.0}`, `{triple.2}`
-    TupleIndex {
-        /// The base expression
-        base: Box<InterpExpr>,
-        /// The tuple index (0-based)
-        index: usize,
-        /// Span covering the entire expression
-        span: Span,
-    },
-}
-
-impl InterpExpr {
-    /// Get the span of this interpolation expression.
-    #[must_use]
-    pub fn span(&self) -> &Span {
-        match self {
-            InterpExpr::Ident(ident) => &ident.span,
-            InterpExpr::FieldAccess { span, .. } => span,
-            InterpExpr::TupleIndex { span, .. } => span,
-        }
-    }
-
-    /// Get the base identifier of this expression.
-    #[must_use]
-    pub fn base_ident(&self) -> &Ident {
-        match self {
-            InterpExpr::Ident(ident) => ident,
-            InterpExpr::FieldAccess { base, .. } => base.base_ident(),
-            InterpExpr::TupleIndex { base, .. } => base.base_ident(),
-        }
-    }
-}
-
-impl fmt::Display for InterpExpr {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            InterpExpr::Ident(ident) => write!(f, "{}", ident.name),
-            InterpExpr::FieldAccess { base, field, .. } => {
-                write!(f, "{}.{}", base, field.name)
-            }
-            InterpExpr::TupleIndex { base, index, .. } => {
-                write!(f, "{}.{}", base, index)
-            }
-        }
-    }
+    /// An interpolated expression: `{ident}`, `{a + b}`, `{foo()}`
+    Interpolation(Box<Expr>),
 }
 
 // =============================================================================
@@ -1249,17 +1187,25 @@ mod tests {
         let template = StringTemplate {
             parts: vec![
                 StringPart::Literal("Hello, ".into()),
-                StringPart::Interpolation(InterpExpr::Ident(Ident::dummy("name"))),
+                StringPart::Interpolation(Box::new(Expr::Var {
+                    name: Ident::dummy("name"),
+                    span: Span::dummy(),
+                })),
                 StringPart::Literal("!".into()),
             ],
             span: Span::dummy(),
         };
         assert!(template.has_interpolations());
-        assert_eq!(format!("{template}"), "\"Hello, {name}!\"");
+        assert_eq!(format!("{template}"), "\"Hello, {...}!\"");
 
         let interps: Vec<_> = template.interpolations().collect();
         assert_eq!(interps.len(), 1);
-        assert_eq!(interps[0].base_ident().name, "name");
+        // Verify it's a Var expression with name "name"
+        if let Expr::Var { name, .. } = interps[0] {
+            assert_eq!(name.name, "name");
+        } else {
+            panic!("Expected Var expression");
+        }
     }
 
     #[test]

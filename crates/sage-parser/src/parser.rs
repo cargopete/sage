@@ -4,7 +4,7 @@
 
 use crate::ast::{
     AgentDecl, BeliefDecl, BinOp, Block, ClosureParam, ConstDecl, ElseBranch, EnumDecl, EventKind,
-    Expr, FieldInit, FnDecl, HandlerDecl, InterpExpr, Literal, MapEntry, MatchArm, MockValue,
+    Expr, FieldInit, FnDecl, HandlerDecl, Literal, MapEntry, MatchArm, MockValue,
     ModDecl, Param, Pattern, Program, RecordDecl, RecordField, Stmt, StringPart, StringTemplate,
     TestDecl, ToolDecl, ToolFnDecl, UnaryOp, UseDecl, UseKind,
 };
@@ -439,9 +439,9 @@ fn test_parser(source: Arc<str>) -> impl Parser<Token, TopLevel, Error = ParseEr
         _ => Err(Simple::expected_input_found(span, [], Some(tok))),
     })
     .map_with_span(move |_, span: Range<usize>| {
-        // Extract the string content without quotes
+        // Extract the string content without quotes (handles both " and ')
         let s = &src[span.clone()];
-        s.trim_matches('"').to_string()
+        s[1..s.len()-1].to_string()
     });
 
     // Test body - use the statement parser
@@ -2014,7 +2014,7 @@ fn string_template_parser(
 }
 
 /// Parse a string into template parts, handling `{expr}` interpolations.
-/// Supports field access chains: `{name}`, `{person.name}`, `{pair.0}`
+/// Supports arbitrary expressions: `{name}`, `{a + b}`, `{foo(x, y)}`
 fn parse_string_template(s: &str, span: &Span) -> Vec<StringPart> {
     let mut parts = Vec::new();
     let mut current = String::new();
@@ -2026,20 +2026,55 @@ fn parse_string_template(s: &str, span: &Span) -> Vec<StringPart> {
                 parts.push(StringPart::Literal(std::mem::take(&mut current)));
             }
 
-            // Collect the full interpolation expression
+            // Collect the full interpolation expression, handling nested braces
             let mut expr_str = String::new();
+            let mut brace_depth = 1;
+            let mut string_quote: Option<char> = None; // Track which quote type we're in
+            let mut escape_next = false;
+
             while let Some(&c) = chars.peek() {
-                if c == '}' {
+                if escape_next {
+                    expr_str.push(c);
                     chars.next();
-                    break;
+                    escape_next = false;
+                    continue;
                 }
+
+                if c == '\\' && string_quote.is_some() {
+                    escape_next = true;
+                    expr_str.push(c);
+                    chars.next();
+                    continue;
+                }
+
+                // Handle string delimiters (both " and ')
+                if c == '"' || c == '\'' {
+                    match string_quote {
+                        None => string_quote = Some(c), // Start of string
+                        Some(q) if q == c => string_quote = None, // End of string
+                        Some(_) => {} // Inside different type of string, ignore
+                    }
+                }
+
+                if string_quote.is_none() {
+                    if c == '{' {
+                        brace_depth += 1;
+                    } else if c == '}' {
+                        brace_depth -= 1;
+                        if brace_depth == 0 {
+                            chars.next();
+                            break;
+                        }
+                    }
+                }
+
                 expr_str.push(c);
                 chars.next();
             }
 
             if !expr_str.is_empty() {
-                let interp_expr = parse_interp_expr(&expr_str, span);
-                parts.push(StringPart::Interpolation(interp_expr));
+                let expr = parse_interp_expr(&expr_str, span);
+                parts.push(StringPart::Interpolation(Box::new(expr)));
             }
         } else if ch == '\\' {
             if let Some(escaped) = chars.next() {
@@ -2070,33 +2105,377 @@ fn parse_string_template(s: &str, span: &Span) -> Vec<StringPart> {
     parts
 }
 
-/// Parse an interpolation expression string like "person.name" or "pair.0".
-fn parse_interp_expr(s: &str, span: &Span) -> InterpExpr {
-    let segments: Vec<&str> = s.split('.').collect();
+/// Parse an interpolation expression string into an Expr AST node.
+/// Lexes and parses the substring using a mini recursive-descent parser.
+fn parse_interp_expr(s: &str, span: &Span) -> Expr {
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        // Empty interpolation, return a placeholder
+        return Expr::Literal {
+            value: Literal::String(String::new()),
+            span: span.clone(),
+        };
+    }
 
-    // Start with the base identifier
-    let mut expr = InterpExpr::Ident(Ident::new(segments[0].to_string(), span.clone()));
-
-    // Add field accesses or tuple indices for subsequent segments
-    for segment in &segments[1..] {
-        if let Ok(index) = segment.parse::<usize>() {
-            // Numeric: tuple index
-            expr = InterpExpr::TupleIndex {
-                base: Box::new(expr),
-                index,
-                span: span.clone(),
-            };
-        } else {
-            // Non-numeric: field access
-            expr = InterpExpr::FieldAccess {
-                base: Box::new(expr),
-                field: Ident::new(segment.to_string(), span.clone()),
+    // Lex the expression substring
+    let lex_result = crate::lex(trimmed);
+    let (tokens, source) = match lex_result {
+        Ok(result) => (result.tokens().to_vec(), trimmed.to_string()),
+        Err(_) => {
+            // Lexing failed, return the raw string as a variable name (fallback)
+            return Expr::Var {
+                name: Ident::new(trimmed.to_string(), span.clone()),
                 span: span.clone(),
             };
         }
+    };
+
+    if tokens.is_empty() {
+        return Expr::Var {
+            name: Ident::new(trimmed.to_string(), span.clone()),
+            span: span.clone(),
+        };
     }
 
-    expr
+    // Parse with a simple recursive descent parser
+    let mut parser = InterpExprParser::new(&tokens, &source, span.clone());
+    parser.parse_expr()
+}
+
+/// A simple recursive-descent parser for interpolation expressions.
+/// Supports: variables, field access, tuple index, binary ops, function calls, parens
+struct InterpExprParser<'a> {
+    tokens: &'a [crate::Spanned],
+    source: &'a str,
+    pos: usize,
+    span: Span,
+}
+
+impl<'a> InterpExprParser<'a> {
+    fn new(tokens: &'a [crate::Spanned], source: &'a str, span: Span) -> Self {
+        Self { tokens, source, pos: 0, span }
+    }
+
+    fn current(&self) -> Option<&Token> {
+        self.tokens.get(self.pos).map(|s| &s.token)
+    }
+
+    fn current_text(&self) -> Option<&str> {
+        self.tokens.get(self.pos).map(|s| &self.source[s.start..s.end])
+    }
+
+    fn advance(&mut self) {
+        if self.pos < self.tokens.len() {
+            self.pos += 1;
+        }
+    }
+
+    fn parse_expr(&mut self) -> Expr {
+        self.parse_or()
+    }
+
+    fn parse_or(&mut self) -> Expr {
+        let mut left = self.parse_and();
+        while matches!(self.current(), Some(Token::Or)) {
+            self.advance();
+            let right = self.parse_and();
+            left = Expr::Binary {
+                left: Box::new(left),
+                op: BinOp::Or,
+                right: Box::new(right),
+                span: self.span.clone(),
+            };
+        }
+        left
+    }
+
+    fn parse_and(&mut self) -> Expr {
+        let mut left = self.parse_comparison();
+        while matches!(self.current(), Some(Token::And)) {
+            self.advance();
+            let right = self.parse_comparison();
+            left = Expr::Binary {
+                left: Box::new(left),
+                op: BinOp::And,
+                right: Box::new(right),
+                span: self.span.clone(),
+            };
+        }
+        left
+    }
+
+    fn parse_comparison(&mut self) -> Expr {
+        let mut left = self.parse_additive();
+        loop {
+            let op = match self.current() {
+                Some(Token::EqEq) => BinOp::Eq,
+                Some(Token::Ne) => BinOp::Ne,
+                Some(Token::Lt) => BinOp::Lt,
+                Some(Token::Le) => BinOp::Le,
+                Some(Token::Gt) => BinOp::Gt,
+                Some(Token::Ge) => BinOp::Ge,
+                _ => break,
+            };
+            self.advance();
+            let right = self.parse_additive();
+            left = Expr::Binary {
+                left: Box::new(left),
+                op,
+                right: Box::new(right),
+                span: self.span.clone(),
+            };
+        }
+        left
+    }
+
+    fn parse_additive(&mut self) -> Expr {
+        let mut left = self.parse_multiplicative();
+        loop {
+            let op = match self.current() {
+                Some(Token::Plus) => BinOp::Add,
+                Some(Token::Minus) => BinOp::Sub,
+                Some(Token::PlusPlus) => BinOp::Concat,
+                _ => break,
+            };
+            self.advance();
+            let right = self.parse_multiplicative();
+            left = Expr::Binary {
+                left: Box::new(left),
+                op,
+                right: Box::new(right),
+                span: self.span.clone(),
+            };
+        }
+        left
+    }
+
+    fn parse_multiplicative(&mut self) -> Expr {
+        let mut left = self.parse_unary();
+        loop {
+            let op = match self.current() {
+                Some(Token::Star) => BinOp::Mul,
+                Some(Token::Slash) => BinOp::Div,
+                Some(Token::Percent) => BinOp::Rem,
+                _ => break,
+            };
+            self.advance();
+            let right = self.parse_unary();
+            left = Expr::Binary {
+                left: Box::new(left),
+                op,
+                right: Box::new(right),
+                span: self.span.clone(),
+            };
+        }
+        left
+    }
+
+    fn parse_unary(&mut self) -> Expr {
+        match self.current() {
+            Some(Token::Minus) => {
+                self.advance();
+                let operand = self.parse_unary();
+                Expr::Unary {
+                    op: UnaryOp::Neg,
+                    operand: Box::new(operand),
+                    span: self.span.clone(),
+                }
+            }
+            Some(Token::Bang) => {
+                self.advance();
+                let operand = self.parse_unary();
+                Expr::Unary {
+                    op: UnaryOp::Not,
+                    operand: Box::new(operand),
+                    span: self.span.clone(),
+                }
+            }
+            _ => self.parse_postfix(),
+        }
+    }
+
+    fn parse_postfix(&mut self) -> Expr {
+        let mut expr = self.parse_primary();
+
+        loop {
+            match self.current() {
+                Some(Token::Dot) => {
+                    self.advance();
+                    match self.current() {
+                        Some(Token::IntLit) => {
+                            let text = self.current_text().unwrap_or("0");
+                            let index = text.parse::<usize>().unwrap_or(0);
+                            self.advance();
+                            expr = Expr::TupleIndex {
+                                tuple: Box::new(expr),
+                                index,
+                                span: self.span.clone(),
+                            };
+                        }
+                        Some(Token::Ident) => {
+                            let name = self.current_text().unwrap_or("").to_string();
+                            let field = Ident::new(name, self.span.clone());
+                            self.advance();
+                            expr = Expr::FieldAccess {
+                                object: Box::new(expr),
+                                field,
+                                span: self.span.clone(),
+                            };
+                        }
+                        _ => break,
+                    }
+                }
+                Some(Token::LParen) if matches!(expr, Expr::Var { .. }) => {
+                    // Function call
+                    if let Expr::Var { name, .. } = expr {
+                        self.advance();
+                        let args = self.parse_args();
+                        expr = Expr::Call {
+                            name,
+                            args,
+                            span: self.span.clone(),
+                        };
+                    }
+                }
+                _ => break,
+            }
+        }
+
+        expr
+    }
+
+    fn parse_primary(&mut self) -> Expr {
+        match self.current() {
+            Some(Token::IntLit) => {
+                let text = self.current_text().unwrap_or("0");
+                let n = text.parse::<i64>().unwrap_or(0);
+                self.advance();
+                Expr::Literal {
+                    value: Literal::Int(n),
+                    span: self.span.clone(),
+                }
+            }
+            Some(Token::FloatLit) => {
+                let text = self.current_text().unwrap_or("0.0");
+                let f = text.parse::<f64>().unwrap_or(0.0);
+                self.advance();
+                Expr::Literal {
+                    value: Literal::Float(f),
+                    span: self.span.clone(),
+                }
+            }
+            Some(Token::StringLit) => {
+                let text = self.current_text().unwrap_or("\"\"");
+                // Remove surrounding quotes
+                let s = if text.len() >= 2 {
+                    text[1..text.len()-1].to_string()
+                } else {
+                    String::new()
+                };
+                self.advance();
+                Expr::Literal {
+                    value: Literal::String(s),
+                    span: self.span.clone(),
+                }
+            }
+            Some(Token::KwTrue) => {
+                self.advance();
+                Expr::Literal {
+                    value: Literal::Bool(true),
+                    span: self.span.clone(),
+                }
+            }
+            Some(Token::KwFalse) => {
+                self.advance();
+                Expr::Literal {
+                    value: Literal::Bool(false),
+                    span: self.span.clone(),
+                }
+            }
+            Some(Token::Ident) => {
+                let name = self.current_text().unwrap_or("").to_string();
+                self.advance();
+                Expr::Var {
+                    name: Ident::new(name, self.span.clone()),
+                    span: self.span.clone(),
+                }
+            }
+            Some(Token::KwSelf) => {
+                self.advance();
+                // Handle self.field
+                if matches!(self.current(), Some(Token::Dot)) {
+                    self.advance();
+                    if let Some(Token::Ident) = self.current() {
+                        let field_name = self.current_text().unwrap_or("").to_string();
+                        let field = Ident::new(field_name, self.span.clone());
+                        self.advance();
+                        return Expr::SelfField {
+                            field,
+                            span: self.span.clone(),
+                        };
+                    }
+                }
+                Expr::Var {
+                    name: Ident::new("self".to_string(), self.span.clone()),
+                    span: self.span.clone(),
+                }
+            }
+            Some(Token::LParen) => {
+                self.advance();
+                let inner = self.parse_expr();
+                if matches!(self.current(), Some(Token::RParen)) {
+                    self.advance();
+                }
+                Expr::Paren {
+                    inner: Box::new(inner),
+                    span: self.span.clone(),
+                }
+            }
+            Some(Token::LBracket) => {
+                // List literal
+                self.advance();
+                let mut elements = Vec::new();
+                while !matches!(self.current(), Some(Token::RBracket) | None) {
+                    elements.push(self.parse_expr());
+                    if matches!(self.current(), Some(Token::Comma)) {
+                        self.advance();
+                    } else {
+                        break;
+                    }
+                }
+                if matches!(self.current(), Some(Token::RBracket)) {
+                    self.advance();
+                }
+                Expr::List {
+                    elements,
+                    span: self.span.clone(),
+                }
+            }
+            _ => {
+                // Unknown token, return empty string literal as fallback
+                Expr::Literal {
+                    value: Literal::String(String::new()),
+                    span: self.span.clone(),
+                }
+            }
+        }
+    }
+
+    fn parse_args(&mut self) -> Vec<Expr> {
+        let mut args = Vec::new();
+        while !matches!(self.current(), Some(Token::RParen) | None) {
+            args.push(self.parse_expr());
+            if matches!(self.current(), Some(Token::Comma)) {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        if matches!(self.current(), Some(Token::RParen)) {
+            self.advance();
+        }
+        args
+    }
 }
 
 // =============================================================================
@@ -2412,6 +2791,69 @@ mod tests {
             } else {
                 panic!("expected infer expression");
             }
+        }
+    }
+
+    #[test]
+    fn parse_single_quoted_string() {
+        let source = r#"
+            agent Main {
+                on start {
+                    let x = 'hello';
+                    emit(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        let stmts = &prog.agents[0].handlers[0].body.stmts;
+        if let Stmt::Let { value, .. } = &stmts[0] {
+            if let Expr::Literal { value: Literal::String(s), .. } = value {
+                assert_eq!(s, "hello");
+            } else {
+                panic!("expected string literal, got {:?}", value);
+            }
+        } else {
+            panic!("expected let statement");
+        }
+    }
+
+    #[test]
+    fn parse_single_quoted_string_in_interpolation() {
+        // Use single quotes for strings inside interpolations to avoid
+        // conflicts with the outer double-quoted string
+        let source = r#"
+            fn reverse(s: String) -> String {
+                return s;
+            }
+            agent Main {
+                on start {
+                    print("Result: {reverse('hello')}");
+                    print("Concat: {'abc' ++ 'def'}");
+                    emit(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        // Verify the string interpolation was parsed
+        let stmts = &prog.agents[0].handlers[0].body.stmts;
+        if let Stmt::Expr { expr: Expr::Call { args, .. }, .. } = &stmts[0] {
+            if let Expr::StringInterp { template, .. } = &args[0] {
+                assert!(template.has_interpolations());
+            } else {
+                panic!("expected string interpolation");
+            }
+        } else {
+            panic!("expected print call");
         }
     }
 
@@ -3832,8 +4274,12 @@ mod tests {
                     assert_eq!(interps.len(), 1);
                     // Should be a field access: p.name
                     match interps[0] {
-                        InterpExpr::FieldAccess { base, field, .. } => {
-                            assert_eq!(base.base_ident().name, "p");
+                        Expr::FieldAccess { object, field, .. } => {
+                            if let Expr::Var { name, .. } = object.as_ref() {
+                                assert_eq!(name.name, "p");
+                            } else {
+                                panic!("expected Var as base");
+                            }
                             assert_eq!(field.name, "name");
                         }
                         _ => panic!("expected FieldAccess, got {:?}", interps[0]),
@@ -3873,8 +4319,12 @@ mod tests {
                     let interps: Vec<_> = template.interpolations().collect();
                     assert_eq!(interps.len(), 1);
                     match interps[0] {
-                        InterpExpr::TupleIndex { base, index, .. } => {
-                            assert_eq!(base.base_ident().name, "pair");
+                        Expr::TupleIndex { tuple, index, .. } => {
+                            if let Expr::Var { name, .. } = tuple.as_ref() {
+                                assert_eq!(name.name, "pair");
+                            } else {
+                                panic!("expected Var as tuple base");
+                            }
                             assert_eq!(*index, 0);
                         }
                         _ => panic!("expected TupleIndex, got {:?}", interps[0]),

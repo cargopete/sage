@@ -3,7 +3,7 @@
 use crate::emit::Emitter;
 use sage_loader::ModuleTree;
 use sage_parser::{
-    AgentDecl, BinOp, Block, ConstDecl, EnumDecl, EventKind, Expr, FnDecl, InterpExpr, Literal,
+    AgentDecl, BinOp, Block, ConstDecl, EnumDecl, EventKind, Expr, FnDecl, Literal,
     MockValue, Program, RecordDecl, Stmt, StringPart, TestDecl, TypeExpr, UnaryOp,
 };
 
@@ -2456,31 +2456,12 @@ serde_json = "1"
 
         // Add the interpolation args
         for part in &template.parts {
-            if let StringPart::Interpolation(interp_expr) = part {
+            if let StringPart::Interpolation(expr) = part {
                 self.emit.write(", ");
-                self.emit_interp_expr(interp_expr);
+                self.generate_expr(expr);
             }
         }
         self.emit.write(")");
-    }
-
-    /// Emit code for an interpolation expression (RFC-0013).
-    fn emit_interp_expr(&mut self, expr: &InterpExpr) {
-        match expr {
-            InterpExpr::Ident(ident) => {
-                self.emit.write(&ident.name);
-            }
-            InterpExpr::FieldAccess { base, field, .. } => {
-                self.emit_interp_expr(base);
-                self.emit.write(".");
-                self.emit.write(&field.name);
-            }
-            InterpExpr::TupleIndex { base, index, .. } => {
-                self.emit_interp_expr(base);
-                self.emit.write(".");
-                self.emit.write(&index.to_string());
-            }
-        }
     }
 
     fn emit_type(&mut self, ty: &TypeExpr) {
