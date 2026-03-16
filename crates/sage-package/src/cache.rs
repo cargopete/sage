@@ -1,6 +1,6 @@
 //! Package cache management.
 //!
-//! Packages are cached at `~/.sage/packages/<name>/<rev>/`
+//! Packages are cached at `~/.grove/packages/<name>/<rev>/`
 
 use crate::dependency::GitDependency;
 use crate::error::PackageError;
@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 /// Manages the local package cache.
 pub struct PackageCache {
-    /// Root directory for the cache (~/.sage/packages/).
+    /// Root directory for the cache (~/.grove/packages/).
     root: PathBuf,
 }
 
@@ -38,11 +38,11 @@ impl PackageCache {
 
     /// Get the cache directory path.
     pub fn cache_dir() -> Result<PathBuf, PackageError> {
-        // Use XDG_CACHE_HOME or ~/.sage/packages
+        // Use XDG_CACHE_HOME or ~/.grove/packages
         if let Some(cache) = dirs::cache_dir() {
-            Ok(cache.join("sage").join("packages"))
+            Ok(cache.join("grove").join("packages"))
         } else if let Some(home) = dirs::home_dir() {
-            Ok(home.join(".sage").join("packages"))
+            Ok(home.join(".grove").join("packages"))
         } else {
             Err(PackageError::IoError {
                 message: "could not determine home directory".to_string(),
@@ -66,7 +66,7 @@ impl PackageCache {
     /// Check if a package is cached.
     pub fn is_cached(&self, name: &str, rev: &str) -> bool {
         let path = self.package_path(name, rev);
-        let meta_path = path.join(".sage-meta.toml");
+        let meta_path = path.join(".grove-meta.toml");
         meta_path.exists()
     }
 
@@ -110,7 +110,7 @@ impl PackageCache {
                 .map(|d| d.as_secs())
                 .unwrap_or(0),
         };
-        let meta_path = path.join(".sage-meta.toml");
+        let meta_path = path.join(".grove-meta.toml");
         let meta_toml = toml::to_string_pretty(&meta).map_err(|e| PackageError::IoError {
             message: format!("failed to serialize meta: {e}"),
             source: std::io::Error::new(std::io::ErrorKind::InvalidData, e),
@@ -295,7 +295,7 @@ impl PackageCache {
                     let rev = version_entry.file_name().to_string_lossy().to_string();
                     let path = version_entry.path();
 
-                    if path.join(".sage-meta.toml").exists() {
+                    if path.join(".grove-meta.toml").exists() {
                         packages.push((pkg_name.clone(), rev, path));
                     }
                 }

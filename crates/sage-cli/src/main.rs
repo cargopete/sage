@@ -84,7 +84,7 @@ enum Commands {
         release: bool,
 
         /// Output directory for generated files
-        #[arg(short, long, default_value = "target/sage")]
+        #[arg(short, long, default_value = "hearth")]
         output: PathBuf,
 
         /// Only generate Rust code, don't compile
@@ -388,7 +388,7 @@ fn run_file(
     trace_file: Option<&Path>,
 ) -> Result<()> {
     // Build the program
-    let output_dir = PathBuf::from("target/sage");
+    let output_dir = PathBuf::from("hearth");
     let binary_path = build_file(path, release, &output_dir, false, quiet)?;
 
     let binary_path = binary_path.ok_or_else(|| miette::miette!("Build did not produce binary"))?;
@@ -895,10 +895,9 @@ run Main;
         .into_diagnostic()
         .wrap_err("Failed to write src/main.sg")?;
 
-    // Create .gitignore (RFC-0013)
+    // Create .gitignore (RFC-0013, RFC-0017)
     let gitignore = r#"# Build artifacts
-/target/
-/.sage/
+/hearth/
 
 # IDE files
 .idea/
@@ -1442,7 +1441,7 @@ fn cmd_test(
     let mut failed_tests: Vec<(String, String, String)> = Vec::new(); // (file, test, error)
 
     // Create output directory for test binaries
-    let test_output_dir = PathBuf::from("target/sage-tests");
+    let test_output_dir = PathBuf::from("hearth/tests");
     std::fs::create_dir_all(&test_output_dir)
         .into_diagnostic()
         .wrap_err("Failed to create test output directory")?;
@@ -1839,7 +1838,7 @@ run Eval;"#,
     let generated = generate(&program, "sage-eval");
 
     // Create temp directory for compilation
-    let temp_dir = PathBuf::from("target/sage/eval");
+    let temp_dir = PathBuf::from("hearth/eval");
     fs::create_dir_all(&temp_dir)
         .into_diagnostic()
         .wrap_err("Failed to create temp directory")?;

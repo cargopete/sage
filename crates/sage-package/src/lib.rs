@@ -3,7 +3,7 @@
 //! This crate handles:
 //! - Parsing `[dependencies]` from `grove.toml`
 //! - Managing `grove.lock` for reproducible builds
-//! - Package cache at `~/.sage/packages/<name>/<version>/`
+//! - Package cache at `~/.grove/packages/<name>/<version>/`
 //! - Git-based dependency resolution
 
 #![forbid(unsafe_code)]
