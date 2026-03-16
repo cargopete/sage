@@ -63,11 +63,11 @@ run Coordinator;
 
 ## Status
 
-**v1.0.3 released** — Generics (parametric polymorphism) for functions, records, and enums.
+**v1.0.4 released** — Keyword renames: `divine`, `summon`, `yield`, `Oracle`.
 
 | | |
 |---|---|
-| **Latest** | [v1.0.3](https://github.com/sagelang/sage/releases/tag/v1.0.3) |
+| **Latest** | [v1.0.4](https://github.com/sagelang/sage/releases/tag/v1.0.4) |
 | **Extension** | `.sg` |
 | **Platforms** | macOS (ARM), Linux (x86_64, ARM) |
 | **Build time** | ~0.5s |
