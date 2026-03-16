@@ -121,6 +121,10 @@ pub fn generate_test_program_with_config(
 struct Generator {
     emit: Emitter,
     runtime_dep: RuntimeDep,
+    /// Variables that are reassigned in the current scope
+    reassigned_vars: std::collections::HashSet<String>,
+    /// Agents that have on_error handlers
+    agents_with_error_handlers: std::collections::HashSet<String>,
 }
 
 impl Generator {
@@ -128,6 +132,39 @@ impl Generator {
         Self {
             emit: Emitter::new(),
             runtime_dep,
+            reassigned_vars: std::collections::HashSet::new(),
+            agents_with_error_handlers: std::collections::HashSet::new(),
+        }
+    }
+
+    /// Scan a block to find all variables that are reassigned (Stmt::Assign)
+    fn collect_reassigned_vars(&mut self, block: &Block) {
+        for stmt in &block.stmts {
+            self.collect_reassigned_vars_stmt(stmt);
+        }
+    }
+
+    fn collect_reassigned_vars_stmt(&mut self, stmt: &Stmt) {
+        match stmt {
+            Stmt::Assign { name, .. } => {
+                self.reassigned_vars.insert(name.name.clone());
+            }
+            Stmt::If { then_block, else_block, .. } => {
+                self.collect_reassigned_vars(then_block);
+                if let Some(else_branch) = else_block {
+                    match else_branch {
+                        sage_parser::ElseBranch::Block(block) => self.collect_reassigned_vars(block),
+                        sage_parser::ElseBranch::ElseIf(stmt) => self.collect_reassigned_vars_stmt(stmt),
+                    }
+                }
+            }
+            Stmt::While { body, .. } | Stmt::Loop { body, .. } => {
+                self.collect_reassigned_vars(body);
+            }
+            Stmt::For { body, .. } => {
+                self.collect_reassigned_vars(body);
+            }
+            _ => {}
         }
     }
 
@@ -831,6 +868,15 @@ serde_json = "1"
     fn generate_agent(&mut self, agent: &AgentDecl) {
         let name = &agent.name.name;
 
+        // Track if this agent has an error handler for spawn generation
+        let has_error_handler = agent
+            .handlers
+            .iter()
+            .any(|h| matches!(h.event, EventKind::Error { .. }));
+        if has_error_handler {
+            self.agents_with_error_handlers.insert(name.clone());
+        }
+
         // RFC-0011: Check for tool usage
         let has_tools = !agent.tool_uses.is_empty();
         let needs_struct_body = !agent.beliefs.is_empty() || has_tools;
@@ -895,7 +941,7 @@ serde_json = "1"
 
                 // RFC-0007: Generate on_error handler
                 EventKind::Error { param_name } => {
-                    self.emit.write("async fn on_error(&self, ");
+                    self.emit.write("async fn on_error(&self, _");
                     self.emit.write(&param_name.name);
                     self.emit.write(": SageError, ctx: &mut AgentContext<");
                     self.emit.write(&output_type);
@@ -1044,7 +1090,6 @@ serde_json = "1"
         self.emit.writeln("}");
         self.emit.dedent();
         self.emit.writeln("};");
-        self.emit.writeln("println!(\"{:?}\", result);");
         self.emit.writeln("Ok(())");
 
         self.emit.dedent();
@@ -1064,6 +1109,8 @@ serde_json = "1"
     }
 
     fn generate_block_contents(&mut self, block: &Block) {
+        // Collect variables that are reassigned in this block
+        self.collect_reassigned_vars(block);
         for stmt in &block.stmts {
             self.generate_stmt(stmt);
         }
@@ -1074,8 +1121,12 @@ serde_json = "1"
             Stmt::Let {
                 name, ty, value, ..
             } => {
-                // All Sage variables are mutable (reassignable)
-                self.emit.write("let mut ");
+                // Only add mut if the variable is reassigned later
+                if self.reassigned_vars.contains(&name.name) {
+                    self.emit.write("let mut ");
+                } else {
+                    self.emit.write("let ");
+                }
                 if ty.is_some() {
                     self.emit.write(&name.name);
                     self.emit.write(": ");
@@ -1263,13 +1314,11 @@ serde_json = "1"
                     self.generate_expr(right);
                     self.emit.write(")");
                 } else {
-                    self.emit.write("(");
                     self.generate_expr(left);
                     self.emit.write(" ");
                     self.emit_binop(op);
                     self.emit.write(" ");
                     self.generate_expr(right);
-                    self.emit.write(")");
                 }
             }
 
@@ -1975,6 +2024,7 @@ serde_json = "1"
             }
 
             Expr::Spawn { agent, fields, .. } => {
+                let has_error_handler = self.agents_with_error_handlers.contains(&agent.name);
                 self.emit.write("sage_runtime::spawn(|mut ctx| async move { ");
                 self.emit.write("let agent = ");
                 self.emit.write(&agent.name);
@@ -1992,7 +2042,14 @@ serde_json = "1"
                     }
                     self.emit.write(" }; ");
                 }
-                self.emit.write("agent.on_start(&mut ctx).await })");
+                if has_error_handler {
+                    // Wire up error handler like in main
+                    self.emit.write("match agent.on_start(&mut ctx).await { ");
+                    self.emit.write("Ok(result) => Ok(result), ");
+                    self.emit.write("Err(e) => agent.on_error(e, &mut ctx).await } })");
+                } else {
+                    self.emit.write("agent.on_start(&mut ctx).await })");
+                }
             }
 
             Expr::Await {
@@ -2684,7 +2741,7 @@ mod tests {
 
         let output = generate_source(source);
         assert!(output.contains("fn add(a: i64, b: i64) -> i64"));
-        assert!(output.contains("return (a + b);"));
+        assert!(output.contains("return a + b;"));
     }
 
     #[test]
@@ -2746,7 +2803,7 @@ mod tests {
         "#;
 
         let output = generate_source(source);
-        assert!(output.contains("if (x > 5_i64)"), "output:\n{output}");
+        assert!(output.contains("if x > 5_i64"), "output:\n{output}");
         // else is on the same line after close brace
         assert!(output.contains("else"), "output:\n{output}");
     }
@@ -2771,7 +2828,7 @@ mod tests {
 
         let output = generate_source(source);
         assert!(output.contains("for x in vec![1_i64, 2_i64, 3_i64]"));
-        assert!(output.contains("while (n < 5_i64)"));
+        assert!(output.contains("while n < 5_i64"));
     }
 
     #[test]
@@ -3030,7 +3087,7 @@ run Main;
 
         let output = generate_source(source);
         // Should generate on_error method with &self and &mut ctx
-        assert!(output.contains("async fn on_error(&self, e: SageError, ctx: &mut AgentContext"));
+        assert!(output.contains("async fn on_error(&self, _e: SageError, ctx: &mut AgentContext"));
         // Main should dispatch to on_error on failure with &mut ctx
         assert!(output.contains(".on_error(e, &mut ctx)"));
     }
