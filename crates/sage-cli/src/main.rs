@@ -54,8 +54,8 @@ enum Commands {
 
     /// Compile and run a Sage program
     Run {
-        /// Path to the .sg file or project directory
-        file: PathBuf,
+        /// Path to the .sg file (defaults to entry in sage.toml or src/main.sg)
+        file: Option<PathBuf>,
 
         /// Build in release mode
         #[arg(long)]
@@ -76,8 +76,8 @@ enum Commands {
 
     /// Compile a Sage program to a native binary
     Build {
-        /// Path to the .sg file or project directory
-        file: PathBuf,
+        /// Path to the .sg file (defaults to entry in sage.toml or src/main.sg)
+        file: Option<PathBuf>,
 
         /// Build in release mode
         #[arg(long)]
@@ -94,8 +94,8 @@ enum Commands {
 
     /// Check a Sage program for errors without running it
     Check {
-        /// Path to the .sg file or project directory
-        file: PathBuf,
+        /// Path to the .sg file (defaults to entry in sage.toml or src/main.sg)
+        file: Option<PathBuf>,
     },
 
     /// Add a package dependency
@@ -265,17 +265,24 @@ fn main() -> Result<()> {
             quiet,
             trace,
             trace_file,
-        } => run_file(&file, release, quiet, trace, trace_file.as_deref()),
+        } => {
+            let resolved_file = resolve_entry_file(file)?;
+            run_file(&resolved_file, release, quiet, trace, trace_file.as_deref())
+        }
         Commands::Build {
             file,
             release,
             output,
             emit_rust,
         } => {
-            build_file(&file, release, &output, emit_rust, false)?;
+            let resolved_file = resolve_entry_file(file)?;
+            build_file(&resolved_file, release, &output, emit_rust, false)?;
             Ok(())
         }
-        Commands::Check { file } => check_file(&file),
+        Commands::Check { file } => {
+            let resolved_file = resolve_entry_file(file)?;
+            check_file(&resolved_file)
+        }
         Commands::Add {
             package,
             git,
@@ -323,6 +330,45 @@ fn print_banner() {
         style("- Where agents come alive").dim()
     );
     println!();
+}
+
+/// Resolve the entry file path, defaulting to sage.toml entry or src/main.sg.
+fn resolve_entry_file(file: Option<PathBuf>) -> Result<PathBuf> {
+    if let Some(f) = file {
+        return Ok(f);
+    }
+
+    // Look for sage.toml in current directory
+    let manifest_path = PathBuf::from("sage.toml");
+    if manifest_path.exists() {
+        let contents = std::fs::read_to_string(&manifest_path)
+            .into_diagnostic()
+            .wrap_err("Failed to read sage.toml")?;
+
+        let doc = contents
+            .parse::<toml_edit::DocumentMut>()
+            .into_diagnostic()
+            .wrap_err("Failed to parse sage.toml")?;
+
+        // Try to get entry from [project] table
+        if let Some(project) = doc.get("project") {
+            if let Some(entry) = project.get("entry") {
+                if let Some(entry_str) = entry.as_str() {
+                    return Ok(PathBuf::from(entry_str));
+                }
+            }
+        }
+    }
+
+    // Default to src/main.sg
+    let default_entry = PathBuf::from("src/main.sg");
+    if default_entry.exists() {
+        return Ok(default_entry);
+    }
+
+    miette::bail!(
+        "No file specified and no src/main.sg found. Run from a Sage project directory or specify a file."
+    );
 }
 
 /// Run a Sage program (compile + execute).

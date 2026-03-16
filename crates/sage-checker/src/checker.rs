@@ -3026,6 +3026,24 @@ impl Checker {
                 self.lookup_var(&ident.name, &ident.span)
             }
             sage_parser::InterpExpr::FieldAccess { base, field, span } => {
+                // Handle self.field references (when parsed as FieldAccess with base Ident("self"))
+                if let sage_parser::InterpExpr::Ident(ident) = base.as_ref() {
+                    if ident.name == "self" {
+                        if let Some(agent_name) = &self.current_agent {
+                            if let Some(agent) = self.symbols.get_agent(agent_name) {
+                                if let Some(ty) = agent.beliefs.get(&field.name) {
+                                    self.used_beliefs.insert(field.name.clone());
+                                    return ty.clone();
+                                }
+                                self.errors
+                                    .push(CheckError::undefined_belief(&field.name, span));
+                            }
+                        } else {
+                            self.errors.push(CheckError::self_outside_agent(span));
+                        }
+                        return Type::Error;
+                    }
+                }
                 let base_ty = self.check_interp_expr(base);
                 // Look up the field in the base type
                 if let Type::Named(record_name) = &base_ty {
@@ -6410,6 +6428,21 @@ impl<'a> ModuleChecker<'a> {
                 self.lookup_var(&ident.name, &ident.span)
             }
             sage_parser::InterpExpr::FieldAccess { base, field, span } => {
+                // Handle self.field references (when parsed as FieldAccess with base Ident("self"))
+                if let sage_parser::InterpExpr::Ident(ident) = base.as_ref() {
+                    if ident.name == "self" {
+                        if let Some(agent_name) = &self.current_agent {
+                            if let Some(agent) = self.lookup_agent(agent_name) {
+                                if let Some(ty) = agent.beliefs.get(&field.name) {
+                                    return ty.clone();
+                                }
+                                self.errors
+                                    .push(CheckError::undefined_belief(&field.name, span));
+                            }
+                        }
+                        return Type::Error;
+                    }
+                }
                 let base_ty = self.check_interp_expr(base);
                 // Look up the field in the base type
                 if let Type::Named(record_name) = &base_ty {

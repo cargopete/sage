@@ -726,9 +726,30 @@ serde_json = "1"
         self.emit.write("const ");
         self.emit.write(&const_decl.name.name);
         self.emit.write(": ");
-        self.emit_type(&const_decl.ty);
+        // String constants must use &'static str since .to_string() isn't const
+        let is_string = matches!(const_decl.ty, TypeExpr::String);
+        if is_string {
+            self.emit.write("&'static str");
+        } else {
+            self.emit_type(&const_decl.ty);
+        }
         self.emit.write(" = ");
-        self.generate_expr(&const_decl.value);
+        // For string constants, emit raw string literal without .to_string()
+        if is_string {
+            if let Expr::Literal {
+                value: Literal::String(s),
+                ..
+            } = &const_decl.value
+            {
+                self.emit.write("\"");
+                self.emit.write(&s.replace('\\', "\\\\").replace('"', "\\\""));
+                self.emit.write("\"");
+            } else {
+                self.generate_expr(&const_decl.value);
+            }
+        } else {
+            self.generate_expr(&const_decl.value);
+        }
         self.emit.writeln(";");
     }
 
@@ -1053,7 +1074,8 @@ serde_json = "1"
             Stmt::Let {
                 name, ty, value, ..
             } => {
-                self.emit.write("let ");
+                // All Sage variables are mutable (reassignable)
+                self.emit.write("let mut ");
                 if ty.is_some() {
                     self.emit.write(&name.name);
                     self.emit.write(": ");
@@ -1892,13 +1914,18 @@ serde_json = "1"
                     }
 
                     _ => {
+                        // User-defined function call
                         self.emit.write(fn_name);
                         self.emit.write("(");
                         for (i, arg) in args.iter().enumerate() {
                             if i > 0 {
                                 self.emit.write(", ");
                             }
+                            // Clone arguments to avoid move issues with Strings
+                            // (compiler optimizes away unnecessary clones for Copy types)
+                            self.emit.write("(");
                             self.generate_expr(arg);
+                            self.emit.write(").clone()");
                         }
                         self.emit.write(")");
                     }
@@ -1941,16 +1968,18 @@ serde_json = "1"
             }
 
             Expr::Infer { template, .. } => {
+                // Note: No ? here - the try wrapper is responsible for error propagation
                 self.emit.write("ctx.infer_string(&");
                 self.emit_string_template(template);
-                self.emit.write(").await?");
+                self.emit.write(").await");
             }
 
             Expr::Spawn { agent, fields, .. } => {
-                self.emit.write("sage_runtime::spawn(|ctx| ");
+                self.emit.write("sage_runtime::spawn(|mut ctx| async move { ");
+                self.emit.write("let agent = ");
                 self.emit.write(&agent.name);
                 if fields.is_empty() {
-                    self.emit.write(".on_start(ctx))");
+                    self.emit.write("; ");
                 } else {
                     self.emit.write(" { ");
                     for (i, field) in fields.iter().enumerate() {
@@ -1961,13 +1990,15 @@ serde_json = "1"
                         self.emit.write(": ");
                         self.generate_expr(&field.value);
                     }
-                    self.emit.write(" }.on_start(ctx))");
+                    self.emit.write(" }; ");
                 }
+                self.emit.write("agent.on_start(&mut ctx).await })");
             }
 
             Expr::Await {
                 handle, timeout, ..
             } => {
+                // Note: No ? here - the try wrapper is responsible for error propagation
                 if let Some(timeout_expr) = timeout {
                     // With timeout: wrap in tokio::time::timeout
                     self.emit.write("tokio::time::timeout(");
@@ -1977,11 +2008,11 @@ serde_json = "1"
                     self.generate_expr(handle);
                     self.emit
                         .write(".result()).await.map_err(|_| sage_runtime::SageError::agent(");
-                    self.emit.write("\"await timed out\"))??");
+                    self.emit.write("\"await timed out\"))?");
                 } else {
                     // Without timeout: simple await
                     self.generate_expr(handle);
-                    self.emit.write(".result().await?");
+                    self.emit.write(".result().await");
                 }
             }
 
@@ -2059,8 +2090,13 @@ serde_json = "1"
                 ..
             } => {
                 // Generate a match expression to handle the Result
+                // If expr is Try { inner }, skip the Try wrapper since we handle the error here
                 self.emit.write("match ");
-                self.generate_expr(expr);
+                if let Expr::Try { expr: inner, .. } = expr.as_ref() {
+                    self.generate_expr(inner);
+                } else {
+                    self.generate_expr(expr);
+                }
                 self.emit.writeln(" {");
                 self.emit.indent();
 
@@ -2511,10 +2547,19 @@ serde_json = "1"
     }
 
     fn find_emit_type(&self, block: &Block) -> Option<String> {
+        // Track variable assignments to resolve emit(var) types
+        let mut var_types: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+
         for stmt in &block.stmts {
+            // Track let bindings
+            if let Stmt::Let { name, value, .. } = stmt {
+                let ty = self.infer_expr_type_with_vars(value, &var_types);
+                var_types.insert(name.name.clone(), ty);
+            }
+
             if let Stmt::Expr { expr, .. } = stmt {
                 if let Expr::Emit { value, .. } = expr {
-                    return Some(self.infer_expr_type(value));
+                    return Some(self.infer_expr_type_with_vars(value, &var_types));
                 }
             }
             // Check nested blocks
@@ -2537,6 +2582,28 @@ serde_json = "1"
             }
         }
         None
+    }
+
+    fn infer_expr_type_with_vars(
+        &self,
+        expr: &Expr,
+        var_types: &std::collections::HashMap<String, String>,
+    ) -> String {
+        match expr {
+            Expr::Var { name, .. } => {
+                // Look up variable type from tracked assignments
+                if let Some(ty) = var_types.get(&name.name) {
+                    return ty.clone();
+                }
+                "i64".to_string() // Conservative default
+            }
+            // Try expression unwraps to inner type
+            Expr::Try { expr, .. } => self.infer_expr_type_with_vars(expr, var_types),
+            // Catch expression returns the Ok type
+            Expr::Catch { expr, .. } => self.infer_expr_type_with_vars(expr, var_types),
+            // Delegate to basic type inference for other expressions
+            _ => self.infer_expr_type(expr),
+        }
     }
 
     fn infer_expr_type(&self, expr: &Expr) -> String {
@@ -2838,7 +2905,8 @@ run Main;
 
         let output = generate_source(source);
         assert!(output.contains("const MAX_SIZE: i64 = 100_i64;"));
-        assert!(output.contains("const GREETING: String = \"Hello\".to_string();"));
+        // String constants use &'static str since .to_string() isn't const in Rust
+        assert!(output.contains("const GREETING: &'static str = \"Hello\";"));
     }
 
     #[test]
