@@ -176,6 +176,10 @@ enum Commands {
         /// Disable ANSI colour output
         #[arg(long)]
         no_colour: bool,
+
+        /// Use real LLM instead of mocks (ignores mock divine statements)
+        #[arg(long)]
+        real_llm: bool,
     },
 
     /// Evaluate a Sage expression or short script
@@ -311,7 +315,8 @@ fn main() -> Result<()> {
             serial,
             verbose,
             no_colour,
-        } => cmd_test(&path, filter, file, serial, verbose, no_colour),
+            real_llm,
+        } => cmd_test(&path, filter, file, serial, verbose, no_colour, real_llm),
         Commands::Eval { code } => cmd_eval(&code),
         Commands::Fmt { paths, check } => cmd_fmt(&paths, check),
         Commands::Trace { action } => match action {
@@ -1373,7 +1378,16 @@ fn cmd_test(
     serial: bool,
     verbose: bool,
     no_colour: bool,
+    real_llm: bool,
 ) -> Result<()> {
+    // Warn if using real LLM
+    if real_llm {
+        eprintln!(
+            "{} Running tests with real LLM (mock divine statements will be ignored)",
+            style("⚠").yellow().bold()
+        );
+    }
+
     // Discover test files
     let test_files = if let Some(specific_file) = file {
         // Run only the specified test file
@@ -1589,9 +1603,16 @@ fn cmd_test(
         }
 
         // Run tests and capture output
-        let test_output = Command::new("cargo")
-            .args(&test_args)
-            .current_dir(&project_dir)
+        let mut cmd = Command::new("cargo");
+        cmd.args(&test_args).current_dir(&project_dir);
+
+        // By default, use mock LLM to avoid real API calls in tests
+        // With --real-llm, use the real LLM (requires SAGE_API_KEY to be set)
+        if !real_llm {
+            cmd.env("SAGE_API_KEY", "mock");
+        }
+
+        let test_output = cmd
             .output()
             .into_diagnostic()
             .wrap_err("Failed to run cargo test")?;
