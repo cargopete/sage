@@ -72,6 +72,10 @@ pub enum SageError {
     #[error("Tool error: {0}")]
     Tool(String),
 
+    /// I/O error (file operations, etc.).
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
+
     /// User-raised error via `fail` expression.
     #[error("{0}")]
     User(String),
@@ -95,8 +99,8 @@ impl SageError {
             SageError::Llm(_) | SageError::Json(_) => ErrorKind::Llm,
             SageError::Agent(_) | SageError::JoinError(_) => ErrorKind::Agent,
             SageError::Type { .. } => ErrorKind::Runtime,
-            // RFC-0011: Http errors are tool errors
-            SageError::Http(_) | SageError::Tool(_) => ErrorKind::Tool,
+            // RFC-0011: Http, Io, and Tool errors are tool errors
+            SageError::Http(_) | SageError::Tool(_) | SageError::Io(_) => ErrorKind::Tool,
             SageError::User(_) => ErrorKind::User,
         }
     }

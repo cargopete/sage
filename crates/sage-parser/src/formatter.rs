@@ -350,6 +350,9 @@ impl Formatter {
         // Beliefs (fields)
         for belief in &agent.beliefs {
             self.write_indent();
+            if belief.is_persistent {
+                self.write("@persistent ");
+            }
             self.write(&belief.name.name);
             self.write(": ");
             self.format_type(&belief.ty);
@@ -361,13 +364,17 @@ impl Formatter {
             self.newline();
         }
 
-        // Sort handlers: on start, on message, on error, on stop
+        // Sort handlers: waking, start, message, pause, resume, error, stop/resting
         let mut sorted_handlers: Vec<&HandlerDecl> = agent.handlers.iter().collect();
         sorted_handlers.sort_by_key(|h| match &h.event {
-            EventKind::Start => 0,
-            EventKind::Message { .. } => 1,
-            EventKind::Error { .. } => 2,
-            EventKind::Stop => 3,
+            EventKind::Waking => 0,
+            EventKind::Start => 1,
+            EventKind::Message { .. } => 2,
+            EventKind::Pause => 3,
+            EventKind::Resume => 4,
+            EventKind::Error { .. } => 5,
+            EventKind::Stop => 6,
+            EventKind::Resting => 7,
         });
 
         for (i, handler) in sorted_handlers.iter().enumerate() {
@@ -384,6 +391,9 @@ impl Formatter {
     fn format_handler(&mut self, handler: &HandlerDecl) {
         self.write_indent();
         match &handler.event {
+            EventKind::Waking => {
+                self.write("on waking {\n");
+            }
             EventKind::Start => {
                 self.write("on start {\n");
             }
@@ -397,6 +407,12 @@ impl Formatter {
                 self.format_type(param_ty);
                 self.write(") {\n");
             }
+            EventKind::Pause => {
+                self.write("on pause {\n");
+            }
+            EventKind::Resume => {
+                self.write("on resume {\n");
+            }
             EventKind::Error { param_name } => {
                 self.write("on error(");
                 self.write(&param_name.name);
@@ -404,6 +420,9 @@ impl Formatter {
             }
             EventKind::Stop => {
                 self.write("on stop {\n");
+            }
+            EventKind::Resting => {
+                self.write("on resting {\n");
             }
         }
         self.indent();

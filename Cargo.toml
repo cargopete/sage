@@ -6,6 +6,7 @@ members = [
     "crates/sage-checker",
     "crates/sage-codegen",
     "crates/sage-runtime",
+    "crates/sage-persistence",
     "crates/sage-sense",
     "crates/sage-cli",
 ]

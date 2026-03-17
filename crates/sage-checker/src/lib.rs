@@ -1260,4 +1260,119 @@ run Main;
         let (_, result) = check_source(source);
         assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
     }
+
+    #[test]
+    fn check_persistent_field_not_serializable() {
+        // @persistent field with Agent type should produce E052
+        let source = r#"
+            agent Worker {
+                on start {
+                    yield(0);
+                }
+            }
+
+            agent Manager {
+                @persistent helper: Agent<Worker>
+
+                on start {
+                    yield(0);
+                }
+            }
+            run Manager with { helper: summon Worker };
+        "#;
+
+        let (_, result) = check_source(source);
+        let persistence_errors: Vec<_> = result
+            .errors
+            .iter()
+            .filter(|e| matches!(e, CheckError::PersistentFieldNotSerializable { .. }))
+            .collect();
+        assert!(!persistence_errors.is_empty(), "expected E052 error, got: {:?}", result.errors);
+        assert!(
+            matches!(
+                persistence_errors[0],
+                CheckError::PersistentFieldNotSerializable { name, .. } if name == "helper"
+            ),
+            "expected PersistentFieldNotSerializable for 'helper', got {:?}",
+            persistence_errors[0]
+        );
+    }
+
+    #[test]
+    fn check_persistent_field_serializable_ok() {
+        // @persistent field with serializable type should be fine
+        let source = r#"
+            agent Counter {
+                @persistent count: Int
+
+                on start {
+                    yield(self.count);
+                }
+            }
+            run Counter with { count: 0 };
+        "#;
+
+        let (_, result) = check_source(source);
+        // Filter out W005 (unused belief) if present - we only care about no E052
+        let errors: Vec<_> = result
+            .errors
+            .iter()
+            .filter(|e| matches!(e, CheckError::PersistentFieldNotSerializable { .. }))
+            .collect();
+        assert!(errors.is_empty(), "unexpected persistence error: {:?}", errors);
+    }
+
+    #[test]
+    fn check_waking_without_persistent_fields() {
+        // on waking without any @persistent fields should produce W006
+        let source = r#"
+            agent Sleeper {
+                count: Int
+
+                on waking {
+                    print("woke up");
+                }
+
+                on start {
+                    yield(self.count);
+                }
+            }
+            run Sleeper with { count: 0 };
+        "#;
+
+        let (_, result) = check_source(source);
+        let warnings: Vec<_> = result
+            .errors
+            .iter()
+            .filter(|e| matches!(e, CheckError::WakingWithoutPersistentFields { .. }))
+            .collect();
+        assert!(!warnings.is_empty(), "expected W006 warning, got {:?}", result.errors);
+    }
+
+    #[test]
+    fn check_waking_with_persistent_fields_ok() {
+        // on waking WITH @persistent fields should be fine
+        let source = r#"
+            agent Sleeper {
+                @persistent count: Int
+
+                on waking {
+                    print("woke up with count: " ++ str(self.count));
+                }
+
+                on start {
+                    yield(self.count);
+                }
+            }
+            run Sleeper with { count: 0 };
+        "#;
+
+        let (_, result) = check_source(source);
+        let warnings: Vec<_> = result
+            .errors
+            .iter()
+            .filter(|e| matches!(e, CheckError::WakingWithoutPersistentFields { .. }))
+            .collect();
+        assert!(warnings.is_empty(), "unexpected W006 warning: {:?}", warnings);
+    }
 }

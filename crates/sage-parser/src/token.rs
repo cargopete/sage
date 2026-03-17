@@ -25,6 +25,22 @@ pub enum Token {
     #[token("stop")]
     KwStop,
 
+    /// v2 lifecycle: runs before start, after persistent state loaded.
+    #[token("waking")]
+    KwWaking,
+
+    /// v2 lifecycle: runs when supervisor signals graceful pause.
+    #[token("pause")]
+    KwPause,
+
+    /// v2 lifecycle: runs when agent is unpaused.
+    #[token("resume")]
+    KwResume,
+
+    /// v2 lifecycle: alias for stop (v2 terminology).
+    #[token("resting")]
+    KwResting,
+
     #[token("message")]
     KwMessage,
 
@@ -347,6 +363,10 @@ impl Token {
                 | Token::KwOn
                 | Token::KwStart
                 | Token::KwStop
+                | Token::KwWaking
+                | Token::KwPause
+                | Token::KwResume
+                | Token::KwResting
                 | Token::KwMessage
                 | Token::KwDivine
                 | Token::KwSummon
@@ -456,6 +476,10 @@ impl std::fmt::Display for Token {
             Token::KwOn => write!(f, "on"),
             Token::KwStart => write!(f, "start"),
             Token::KwStop => write!(f, "stop"),
+            Token::KwWaking => write!(f, "waking"),
+            Token::KwPause => write!(f, "pause"),
+            Token::KwResume => write!(f, "resume"),
+            Token::KwResting => write!(f, "resting"),
             Token::KwMessage => write!(f, "message"),
             Token::KwDivine => write!(f, "divine"),
             Token::KwSummon => write!(f, "summon"),

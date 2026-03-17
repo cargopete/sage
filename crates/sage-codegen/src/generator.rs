@@ -60,7 +60,8 @@ pub fn generate_with_config(
 ) -> GeneratedProject {
     let mut gen = Generator::new(runtime_dep);
     let main_rs = gen.generate_program(program);
-    let cargo_toml = gen.generate_cargo_toml(project_name);
+    let needs_persistence = Generator::has_persistent_fields(program);
+    let cargo_toml = gen.generate_cargo_toml_with_persistence(project_name, needs_persistence);
     GeneratedProject {
         main_rs,
         cargo_toml,
@@ -83,7 +84,8 @@ pub fn generate_module_tree_with_config(
 ) -> GeneratedProject {
     let mut gen = Generator::new(runtime_dep);
     let main_rs = gen.generate_module_tree(tree);
-    let cargo_toml = gen.generate_cargo_toml(project_name);
+    let needs_persistence = Generator::has_persistent_fields_in_tree(tree);
+    let cargo_toml = gen.generate_cargo_toml_with_persistence(project_name, needs_persistence);
     GeneratedProject {
         main_rs,
         cargo_toml,
@@ -325,7 +327,21 @@ impl Generator {
     }
 
     fn generate_cargo_toml(&self, name: &str) -> String {
+        self.generate_cargo_toml_impl(name, false)
+    }
+
+    fn generate_cargo_toml_with_persistence(&self, name: &str, needs_persistence: bool) -> String {
+        self.generate_cargo_toml_impl(name, needs_persistence)
+    }
+
+    fn generate_cargo_toml_impl(&self, name: &str, needs_persistence: bool) -> String {
         let runtime_dep = self.runtime_dep.to_cargo_dep();
+        let persistence_dep = if needs_persistence {
+            // TODO: Once sage-persistence is published, use version from runtime_dep
+            "sage-persistence = { version = \"1.0\", features = [\"sqlite\"] }\n"
+        } else {
+            ""
+        };
         format!(
             r#"[package]
 name = "{name}"
@@ -334,7 +350,7 @@ edition = "2021"
 
 [dependencies]
 {runtime_dep}
-tokio = {{ version = "1", features = ["full"] }}
+{persistence_dep}tokio = {{ version = "1", features = ["full"] }}
 serde = {{ version = "1", features = ["derive"] }}
 serde_json = "1"
 
@@ -342,6 +358,21 @@ serde_json = "1"
 [workspace]
 "#
         )
+    }
+
+    /// Check if a program has any agents with @persistent fields.
+    fn has_persistent_fields(program: &Program) -> bool {
+        program
+            .agents
+            .iter()
+            .any(|agent| agent.beliefs.iter().any(|b| b.is_persistent))
+    }
+
+    /// Check if any module in a tree has agents with @persistent fields.
+    fn has_persistent_fields_in_tree(tree: &ModuleTree) -> bool {
+        tree.modules
+            .values()
+            .any(|module| Self::has_persistent_fields(&module.program))
     }
 
     // =========================================================================
@@ -952,11 +983,26 @@ serde_json = "1"
                 self.emit.writeln("Client,");
             }
 
-            // Regular belief fields
+            // Check if this agent has any @persistent fields
+            let has_persistent = agent.beliefs.iter().any(|b| b.is_persistent);
+
+            // Add checkpoint store field if agent has persistent beliefs
+            if has_persistent {
+                self.emit.writeln("_checkpoint: std::sync::Arc<dyn CheckpointStore>,");
+                self.emit.writeln("_checkpoint_key: String,");
+            }
+
+            // Regular belief fields - wrap @persistent ones in Persisted<T>
             for belief in &agent.beliefs {
                 self.emit.write(&belief.name.name);
                 self.emit.write(": ");
-                self.emit_type(&belief.ty);
+                if belief.is_persistent {
+                    self.emit.write("Persisted<");
+                    self.emit_type(&belief.ty);
+                    self.emit.write(">");
+                } else {
+                    self.emit_type(&belief.ty);
+                }
                 self.emit.writeln(",");
             }
             self.emit.dedent();
@@ -976,6 +1022,15 @@ serde_json = "1"
         // Generate handlers
         for handler in &agent.handlers {
             match &handler.event {
+                // v2 lifecycle: on waking - runs before start, after persistent state loaded
+                EventKind::Waking => {
+                    self.emit.writeln("async fn on_waking(&self) {");
+                    self.emit.indent();
+                    self.generate_block_contents(&handler.body);
+                    self.emit.dedent();
+                    self.emit.writeln("}");
+                }
+
                 EventKind::Start => {
                     self.emit
                         .write("async fn on_start(&self, ctx: &mut AgentContext<");
@@ -1004,8 +1059,35 @@ serde_json = "1"
                     self.emit.writeln("}");
                 }
 
+                // v2 lifecycle: on pause - runs when supervisor signals graceful pause
+                EventKind::Pause => {
+                    self.emit.writeln("async fn on_pause(&self) {");
+                    self.emit.indent();
+                    self.generate_block_contents(&handler.body);
+                    self.emit.dedent();
+                    self.emit.writeln("}");
+                }
+
+                // v2 lifecycle: on resume - runs when agent is unpaused
+                EventKind::Resume => {
+                    self.emit.writeln("async fn on_resume(&self) {");
+                    self.emit.indent();
+                    self.generate_block_contents(&handler.body);
+                    self.emit.dedent();
+                    self.emit.writeln("}");
+                }
+
                 // on stop handler - cleanup before termination
                 EventKind::Stop => {
+                    self.emit.writeln("async fn on_stop(&self) {");
+                    self.emit.indent();
+                    self.generate_block_contents(&handler.body);
+                    self.emit.dedent();
+                    self.emit.writeln("}");
+                }
+
+                // v2 lifecycle: on resting - alias for stop
+                EventKind::Resting => {
                     self.emit.writeln("async fn on_stop(&self) {");
                     self.emit.indent();
                     self.generate_block_contents(&handler.body);
@@ -1032,10 +1114,19 @@ serde_json = "1"
         let has_stop_handler = agent
             .handlers
             .iter()
-            .any(|h| matches!(h.event, EventKind::Stop));
+            .any(|h| matches!(h.event, EventKind::Stop | EventKind::Resting));
 
         // RFC-0011: Check if agent uses tools
         let has_tools = !agent.tool_uses.is_empty();
+
+        // v2.0: Check if agent has @persistent fields
+        let has_persistent = agent.beliefs.iter().any(|b| b.is_persistent);
+
+        // v2.0: Check if agent has on_waking handler
+        let has_waking = agent
+            .handlers
+            .iter()
+            .any(|h| matches!(h.event, EventKind::Waking));
 
         self.emit.writeln("#[tokio::main]");
         self.emit
@@ -1046,19 +1137,61 @@ serde_json = "1"
         self.emit.writeln("sage_runtime::trace::init();");
         self.emit.writeln("");
 
-        // Helper to generate agent construction (with or without tool fields)
-        let agent_construct = if has_tools {
+        // v2.0: Initialize checkpoint store if agent has persistent fields
+        if has_persistent {
+            self.emit.writeln("// Initialize persistence checkpoint store");
+            self.emit.writeln("let _checkpoint: std::sync::Arc<dyn CheckpointStore> = std::sync::Arc::new(");
+            self.emit.indent();
+            self.emit.writeln("sage_runtime::persistence::MemoryCheckpointStore::new()");
+            self.emit.dedent();
+            self.emit.writeln(");");
+            self.emit.write("let _checkpoint_key = \"");
+            self.emit.write(entry_agent);
+            self.emit.writeln("_entry\".to_string();");
+            self.emit.writeln("");
+        }
+
+        // Helper to generate agent construction (with or without tool/persistent fields)
+        let needs_struct = has_tools || !agent.beliefs.is_empty();
+        let agent_construct = if needs_struct {
             let mut s = format!("{entry_agent} {{ ");
-            for (i, tool_use) in agent.tool_uses.iter().enumerate() {
-                if i > 0 {
-                    s.push_str(", ");
-                }
-                // Generate: http: HttpClient::from_env()
-                s.push_str(&tool_use.name.to_lowercase());
-                s.push_str(": ");
-                s.push_str(&tool_use.name);
-                s.push_str("Client::from_env()");
+            let mut fields = Vec::new();
+
+            // Add checkpoint fields if persistent
+            if has_persistent {
+                fields.push("_checkpoint: std::sync::Arc::clone(&_checkpoint)".to_string());
+                fields.push("_checkpoint_key: _checkpoint_key.clone()".to_string());
             }
+
+            // Add tool fields
+            for tool_use in &agent.tool_uses {
+                if tool_use.name == "Database" {
+                    fields.push(format!("{}: _db_client", tool_use.name.to_lowercase()));
+                } else {
+                    fields.push(format!(
+                        "{}: {}Client::from_env()",
+                        tool_use.name.to_lowercase(),
+                        tool_use.name
+                    ));
+                }
+            }
+
+            // Add belief fields
+            for belief in &agent.beliefs {
+                if belief.is_persistent {
+                    // Persisted fields load from checkpoint
+                    fields.push(format!(
+                        "{}: Persisted::new(std::sync::Arc::clone(&_checkpoint), &_checkpoint_key, \"{}\")",
+                        belief.name.name,
+                        belief.name.name
+                    ));
+                } else {
+                    // Non-persistent beliefs use Default
+                    fields.push(format!("{}: Default::default()", belief.name.name));
+                }
+            }
+
+            s.push_str(&fields.join(", "));
             s.push_str(" }");
             s
         } else {
@@ -1093,9 +1226,26 @@ serde_json = "1"
         self.emit
             .writeln("let handle = sage_runtime::spawn(|mut ctx| async move {");
         self.emit.indent();
+
+        // RFC-0011: Initialize async tools (like Database) before agent construction
+        for tool_use in &agent.tool_uses {
+            if tool_use.name == "Database" {
+                // Database requires async initialization
+                self.emit.write("let _db_client = DatabaseClient::from_env().await");
+                self.emit.writeln(".expect(\"Failed to connect to database\");");
+            }
+        }
+
         self.emit.write("let agent = ");
         self.emit.write(&agent_construct);
         self.emit.writeln(";");
+
+        // v2.0: Call on_waking after persistent state is loaded
+        if has_waking {
+            self.emit.writeln("");
+            self.emit.writeln("// on_waking: runs after persistent state loaded, before on_start");
+            self.emit.writeln("agent.on_waking().await;");
+        }
 
         if has_error_handler {
             // RFC-0007: Generate error dispatch code
@@ -2861,6 +3011,36 @@ mod tests {
         assert!(output.contains("struct Worker {"));
         assert!(output.contains("value: i64,"));
         assert!(output.contains("self.value"));
+    }
+
+    #[test]
+    fn generate_persistent_beliefs() {
+        let source = r#"
+            agent Counter {
+                @persistent count: Int
+
+                on waking {
+                    print("woke up");
+                }
+
+                on start {
+                    yield(self.count.get());
+                }
+            }
+            run Counter;
+        "#;
+
+        let output = generate_source(source);
+        // Agent struct should have checkpoint fields and Persisted wrapper
+        assert!(output.contains("_checkpoint:"), "missing checkpoint field");
+        assert!(output.contains("_checkpoint_key:"), "missing checkpoint key field");
+        assert!(output.contains("Persisted<i64>"), "count should be wrapped in Persisted");
+        // Main should initialize checkpoint store
+        assert!(output.contains("MemoryCheckpointStore"), "missing checkpoint store init");
+        assert!(output.contains("Persisted::new"), "missing Persisted::new in construction");
+        // on_waking handler should be generated and called
+        assert!(output.contains("async fn on_waking"), "missing on_waking handler");
+        assert!(output.contains("agent.on_waking().await"), "missing on_waking call");
     }
 
     #[test]

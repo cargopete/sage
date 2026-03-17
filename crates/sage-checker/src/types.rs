@@ -267,6 +267,39 @@ impl Type {
         }
     }
 
+    /// Check if this type is serializable (can be persisted).
+    /// Serializable types: primitives, List<T>, Option<T>, Map<K,V>, Tuple,
+    /// Result<T,E>, Named (records/enums), Generic with serializable args.
+    /// NOT serializable: Fn, Agent, Oracle, TypeParam.
+    #[must_use]
+    pub fn is_serializable(&self) -> bool {
+        match self {
+            // Primitives are serializable
+            Type::Int | Type::Float | Type::Bool | Type::String | Type::Unit => true,
+
+            // Compound types are serializable if their inner types are
+            Type::List(elem) | Type::Option(elem) => elem.is_serializable(),
+            Type::Map(key, value) | Type::Result(key, value) => {
+                key.is_serializable() && value.is_serializable()
+            }
+            Type::Tuple(elems) => elems.iter().all(Type::is_serializable),
+            Type::Generic(_, args) => args.iter().all(Type::is_serializable),
+
+            // Named types (records/enums) are assumed serializable
+            // (the user-defined type's fields are checked separately)
+            Type::Named(_) => true,
+
+            // Non-serializable types
+            Type::Fn(_, _) => false,    // Functions can't be serialized
+            Type::Agent(_) => false,    // Agent handles are runtime-only
+            Type::Oracle(_) => false,   // Oracle results are transient
+            Type::TypeParam(_) => false, // Unresolved type params can't be verified
+
+            // Error and Never are edge cases - treat as non-serializable
+            Type::Never | Type::Error => false,
+        }
+    }
+
     /// Check if this type contains any type parameters.
     #[must_use]
     pub fn has_type_params(&self) -> bool {
@@ -467,5 +500,35 @@ mod tests {
         assert!(!Type::Int.is_fn());
         assert_eq!(Type::Int.fn_params(), None);
         assert_eq!(Type::Int.fn_return(), None);
+    }
+
+    #[test]
+    fn type_serializability() {
+        // Primitives are serializable
+        assert!(Type::Int.is_serializable());
+        assert!(Type::Float.is_serializable());
+        assert!(Type::Bool.is_serializable());
+        assert!(Type::String.is_serializable());
+        assert!(Type::Unit.is_serializable());
+
+        // Compound types with serializable inner types
+        assert!(Type::List(Box::new(Type::Int)).is_serializable());
+        assert!(Type::Option(Box::new(Type::String)).is_serializable());
+        assert!(Type::Map(Box::new(Type::String), Box::new(Type::Int)).is_serializable());
+        assert!(Type::Tuple(vec![Type::Int, Type::Bool]).is_serializable());
+        assert!(Type::Result(Box::new(Type::Int), Box::new(Type::String)).is_serializable());
+
+        // Named types (records/enums) are serializable
+        assert!(Type::Named("MyRecord".to_string()).is_serializable());
+
+        // Non-serializable types
+        assert!(!Type::Fn(vec![Type::Int], Box::new(Type::Bool)).is_serializable());
+        assert!(!Type::Agent("Foo".to_string()).is_serializable());
+        assert!(!Type::Oracle(Box::new(Type::String)).is_serializable());
+        assert!(!Type::TypeParam("T".to_string()).is_serializable());
+
+        // Compound types with non-serializable inner types
+        assert!(!Type::List(Box::new(Type::Agent("Foo".to_string()))).is_serializable());
+        assert!(!Type::Option(Box::new(Type::Fn(vec![], Box::new(Type::Unit)))).is_serializable());
     }
 }

@@ -14,6 +14,85 @@ pub struct ProjectManifest {
     pub dependencies: toml::Table,
     #[serde(default)]
     pub test: TestConfig,
+    #[serde(default)]
+    pub tools: ToolsConfig,
+    #[serde(default)]
+    pub persistence: PersistenceConfig,
+}
+
+/// Tool configuration section of grove.toml.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct ToolsConfig {
+    pub database: Option<DatabaseToolConfig>,
+    pub http: Option<HttpToolConfig>,
+    pub filesystem: Option<FileSystemToolConfig>,
+}
+
+/// Database tool configuration.
+#[derive(Debug, Clone, Deserialize)]
+pub struct DatabaseToolConfig {
+    /// Database driver: "postgres", "sqlite", etc.
+    pub driver: String,
+    /// Connection URL.
+    pub url: String,
+    /// Connection pool size.
+    #[serde(default = "default_pool_size")]
+    pub pool_size: u32,
+}
+
+fn default_pool_size() -> u32 {
+    5
+}
+
+/// HTTP tool configuration.
+#[derive(Debug, Clone, Deserialize)]
+pub struct HttpToolConfig {
+    /// Request timeout in milliseconds.
+    #[serde(default = "default_http_timeout")]
+    pub timeout_ms: u64,
+}
+
+fn default_http_timeout() -> u64 {
+    30_000 // 30 seconds
+}
+
+/// FileSystem tool configuration.
+#[derive(Debug, Clone, Deserialize)]
+pub struct FileSystemToolConfig {
+    /// Root directory for filesystem operations.
+    pub root: PathBuf,
+}
+
+/// Persistence configuration for @persistent agent fields.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PersistenceConfig {
+    /// Storage backend: "sqlite" (default), "postgres", or "file".
+    #[serde(default = "default_persistence_backend")]
+    pub backend: String,
+    /// Path for file-based backends (sqlite, file).
+    #[serde(default = "default_persistence_path")]
+    pub path: String,
+    /// Connection URL for postgres backend.
+    #[serde(default)]
+    pub url: Option<String>,
+}
+
+impl Default for PersistenceConfig {
+    fn default() -> Self {
+        Self {
+            backend: default_persistence_backend(),
+            path: default_persistence_path(),
+            url: None,
+        }
+    }
+}
+
+fn default_persistence_backend() -> String {
+    "sqlite".to_string()
+}
+
+fn default_persistence_path() -> String {
+    ".sage/checkpoints.db".to_string()
 }
 
 /// The [test] section of grove.toml.
@@ -153,5 +232,162 @@ timeout_ms = 30000
 "#;
         let manifest: ProjectManifest = toml::from_str(toml).unwrap();
         assert_eq!(manifest.test.timeout_ms, 30_000);
+    }
+
+    #[test]
+    fn parse_tools_config_default() {
+        let toml = r#"
+[project]
+name = "test"
+"#;
+        let manifest: ProjectManifest = toml::from_str(toml).unwrap();
+        assert!(manifest.tools.database.is_none());
+        assert!(manifest.tools.http.is_none());
+        assert!(manifest.tools.filesystem.is_none());
+    }
+
+    #[test]
+    fn parse_tools_database_config() {
+        let toml = r#"
+[project]
+name = "test"
+
+[tools.database]
+driver = "postgres"
+url = "postgresql://localhost/mydb"
+"#;
+        let manifest: ProjectManifest = toml::from_str(toml).unwrap();
+        let db = manifest.tools.database.unwrap();
+        assert_eq!(db.driver, "postgres");
+        assert_eq!(db.url, "postgresql://localhost/mydb");
+        assert_eq!(db.pool_size, 5); // default
+    }
+
+    #[test]
+    fn parse_tools_database_config_with_pool() {
+        let toml = r#"
+[project]
+name = "test"
+
+[tools.database]
+driver = "sqlite"
+url = ":memory:"
+pool_size = 10
+"#;
+        let manifest: ProjectManifest = toml::from_str(toml).unwrap();
+        let db = manifest.tools.database.unwrap();
+        assert_eq!(db.driver, "sqlite");
+        assert_eq!(db.pool_size, 10);
+    }
+
+    #[test]
+    fn parse_tools_http_config() {
+        let toml = r#"
+[project]
+name = "test"
+
+[tools.http]
+timeout_ms = 60000
+"#;
+        let manifest: ProjectManifest = toml::from_str(toml).unwrap();
+        let http = manifest.tools.http.unwrap();
+        assert_eq!(http.timeout_ms, 60_000);
+    }
+
+    #[test]
+    fn parse_tools_filesystem_config() {
+        let toml = r#"
+[project]
+name = "test"
+
+[tools.filesystem]
+root = "/var/data"
+"#;
+        let manifest: ProjectManifest = toml::from_str(toml).unwrap();
+        let fs = manifest.tools.filesystem.unwrap();
+        assert_eq!(fs.root, PathBuf::from("/var/data"));
+    }
+
+    #[test]
+    fn parse_tools_all_configs() {
+        let toml = r#"
+[project]
+name = "full-project"
+
+[tools.database]
+driver = "postgres"
+url = "postgresql://localhost/db"
+pool_size = 20
+
+[tools.http]
+timeout_ms = 5000
+
+[tools.filesystem]
+root = "./data"
+"#;
+        let manifest: ProjectManifest = toml::from_str(toml).unwrap();
+        assert!(manifest.tools.database.is_some());
+        assert!(manifest.tools.http.is_some());
+        assert!(manifest.tools.filesystem.is_some());
+    }
+
+    #[test]
+    fn parse_persistence_default() {
+        let toml = r#"
+[project]
+name = "test"
+"#;
+        let manifest: ProjectManifest = toml::from_str(toml).unwrap();
+        assert_eq!(manifest.persistence.backend, "sqlite");
+        assert_eq!(manifest.persistence.path, ".sage/checkpoints.db");
+        assert!(manifest.persistence.url.is_none());
+    }
+
+    #[test]
+    fn parse_persistence_sqlite() {
+        let toml = r#"
+[project]
+name = "test"
+
+[persistence]
+backend = "sqlite"
+path = "./checkpoints/data.db"
+"#;
+        let manifest: ProjectManifest = toml::from_str(toml).unwrap();
+        assert_eq!(manifest.persistence.backend, "sqlite");
+        assert_eq!(manifest.persistence.path, "./checkpoints/data.db");
+    }
+
+    #[test]
+    fn parse_persistence_postgres() {
+        let toml = r#"
+[project]
+name = "test"
+
+[persistence]
+backend = "postgres"
+url = "postgresql://user:pass@localhost/mydb"
+"#;
+        let manifest: ProjectManifest = toml::from_str(toml).unwrap();
+        assert_eq!(manifest.persistence.backend, "postgres");
+        assert_eq!(
+            manifest.persistence.url,
+            Some("postgresql://user:pass@localhost/mydb".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_persistence_file() {
+        let toml = r#"
+[project]
+name = "test"
+
+[persistence]
+backend = "file"
+path = "./state"
+"#;
+        let manifest: ProjectManifest = toml::from_str(toml).unwrap();
+        assert_eq!(manifest.persistence.backend, "file");
+        assert_eq!(manifest.persistence.path, "./state");
     }
 }

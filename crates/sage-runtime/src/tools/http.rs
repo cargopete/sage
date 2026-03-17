@@ -1,6 +1,6 @@
 //! RFC-0011: HTTP client tool for Sage agents.
 //!
-//! Provides the `Http` tool with `get` and `post` methods.
+//! Provides the `Http` tool with `get`, `post`, `put`, and `delete` methods.
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -149,6 +149,73 @@ impl HttpClient {
         Ok(HttpResponse {
             status,
             body: response_body,
+            headers,
+        })
+    }
+
+    /// Perform an HTTP PUT request.
+    ///
+    /// # Arguments
+    /// * `url` - The URL to request
+    /// * `body` - The request body as a string
+    ///
+    /// # Returns
+    /// An `HttpResponse` with status, body, and headers.
+    pub async fn put(&self, url: String, body: String) -> SageResult<HttpResponse> {
+        let response = self
+            .client
+            .put(url)
+            .header("Content-Type", "application/json")
+            .body(body)
+            .send()
+            .await?;
+
+        let status = response.status().as_u16() as i64;
+        let headers = response
+            .headers()
+            .iter()
+            .map(|(k, v)| {
+                (
+                    k.as_str().to_string(),
+                    v.to_str().unwrap_or_default().to_string(),
+                )
+            })
+            .collect();
+        let response_body = response.text().await?;
+
+        Ok(HttpResponse {
+            status,
+            body: response_body,
+            headers,
+        })
+    }
+
+    /// Perform an HTTP DELETE request.
+    ///
+    /// # Arguments
+    /// * `url` - The URL to request
+    ///
+    /// # Returns
+    /// An `HttpResponse` with status, body, and headers.
+    pub async fn delete(&self, url: String) -> SageResult<HttpResponse> {
+        let response = self.client.delete(url).send().await?;
+
+        let status = response.status().as_u16() as i64;
+        let headers = response
+            .headers()
+            .iter()
+            .map(|(k, v)| {
+                (
+                    k.as_str().to_string(),
+                    v.to_str().unwrap_or_default().to_string(),
+                )
+            })
+            .collect();
+        let body = response.text().await?;
+
+        Ok(HttpResponse {
+            status,
+            body,
             headers,
         })
     }

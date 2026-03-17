@@ -522,6 +522,33 @@ pub enum CheckError {
     },
 
     // =========================================================================
+    // Persistence errors (v2.0)
+    // =========================================================================
+    #[error("`@persistent` field `{name}` has non-serializable type `{ty}`")]
+    #[diagnostic(
+        code(sage::E052),
+        help("Eskar notes: persistent fields must be serializable (primitives, List, Option, records, enums)")
+    )]
+    PersistentFieldNotSerializable {
+        name: String,
+        ty: String,
+        #[label("function types and agent handles cannot be persisted")]
+        span: SourceSpan,
+    },
+
+    #[error("`on waking` handler in agent with no `@persistent` fields")]
+    #[diagnostic(
+        code(sage::W006),
+        severity(warning),
+        help("Lyr observes: `on waking` is for loading persisted state — without `@persistent` fields, it serves no purpose")
+    )]
+    WakingWithoutPersistentFields {
+        agent_name: String,
+        #[label("this agent has no persistent fields")]
+        span: SourceSpan,
+    },
+
+    // =========================================================================
     // Generics errors (RFC-0015)
     // =========================================================================
     #[error("{message}")]
@@ -1029,6 +1056,36 @@ impl CheckError {
     // =========================================================================
     // RFC-0015: Generics helpers
     // =========================================================================
+
+    // =========================================================================
+    // Persistence helpers (v2.0)
+    // =========================================================================
+
+    /// Create a persistent field not serializable error (E052).
+    #[must_use]
+    pub fn persistent_field_not_serializable(
+        name: impl Into<String>,
+        ty: impl Into<String>,
+        span: &Span,
+    ) -> Self {
+        Self::PersistentFieldNotSerializable {
+            name: name.into(),
+            ty: ty.into(),
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create a waking without persistent fields warning (W006).
+    #[must_use]
+    pub fn waking_without_persistent_fields(
+        agent_name: impl Into<String>,
+        span: &Span,
+    ) -> Self {
+        Self::WakingWithoutPersistentFields {
+            agent_name: agent_name.into(),
+            span: to_source_span(span),
+        }
+    }
 
     /// Create a generic-related error (E100).
     pub fn generic(message: impl Into<String>, span: &Span) -> Self {

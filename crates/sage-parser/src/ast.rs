@@ -203,9 +203,11 @@ pub struct AgentDecl {
     pub span: Span,
 }
 
-/// A belief declaration: `belief name: Type`
+/// A belief declaration: `name: Type` or `@persistent name: Type`
 #[derive(Debug, Clone, PartialEq)]
 pub struct BeliefDecl {
+    /// Whether this field is persistent (checkpointed across restarts).
+    pub is_persistent: bool,
     /// The belief's name.
     pub name: Ident,
     /// The belief's type.
@@ -228,6 +230,8 @@ pub struct HandlerDecl {
 /// The kind of event a handler responds to.
 #[derive(Debug, Clone, PartialEq)]
 pub enum EventKind {
+    /// `on waking` — runs before start, after persistent state loaded (v2 lifecycle).
+    Waking,
     /// `on start` — runs when the agent is spawned.
     Start,
     /// `on message(param: Type)` — runs when a message is received.
@@ -237,8 +241,14 @@ pub enum EventKind {
         /// The type of the message.
         param_ty: TypeExpr,
     },
+    /// `on pause` — runs when supervisor signals graceful pause (v2 lifecycle).
+    Pause,
+    /// `on resume` — runs when agent is unpaused (v2 lifecycle).
+    Resume,
     /// `on stop` — runs during graceful shutdown.
     Stop,
+    /// `on resting` — alias for stop (v2 terminology).
+    Resting,
     /// `on error(e)` — runs when an unhandled error occurs in the agent.
     Error {
         /// The parameter name for the error.
@@ -249,6 +259,7 @@ pub enum EventKind {
 impl fmt::Display for EventKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            EventKind::Waking => write!(f, "waking"),
             EventKind::Start => write!(f, "start"),
             EventKind::Message {
                 param_name,
@@ -256,7 +267,10 @@ impl fmt::Display for EventKind {
             } => {
                 write!(f, "message({param_name}: {param_ty})")
             }
+            EventKind::Pause => write!(f, "pause"),
+            EventKind::Resume => write!(f, "resume"),
             EventKind::Stop => write!(f, "stop"),
+            EventKind::Resting => write!(f, "resting"),
             EventKind::Error { param_name } => {
                 write!(f, "error({param_name})")
             }
