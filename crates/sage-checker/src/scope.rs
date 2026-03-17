@@ -150,6 +150,19 @@ pub struct ToolInfo {
     pub is_pub: bool,
 }
 
+/// Information about a declared supervisor (v2 supervision trees).
+#[derive(Debug, Clone)]
+pub struct SupervisorInfo {
+    /// The supervisor's name.
+    pub name: String,
+    /// Names of child agents this supervisor manages.
+    pub children: Vec<String>,
+    /// Whether this supervisor is public.
+    pub is_pub: bool,
+    /// The module path where this supervisor is defined.
+    pub module_path: ModulePath,
+}
+
 /// Information about a tool function (RFC-0011).
 #[derive(Debug, Clone)]
 pub struct ToolFnInfo {
@@ -398,6 +411,8 @@ impl Scope {
 pub struct SymbolTable {
     /// Declared agents.
     agents: HashMap<String, AgentInfo>,
+    /// Declared supervisors (v2).
+    supervisors: HashMap<String, SupervisorInfo>,
     /// Declared functions.
     functions: HashMap<String, FunctionInfo>,
     /// Built-in functions.
@@ -2020,6 +2035,28 @@ impl SymbolTable {
     /// Iterate over all functions.
     pub fn iter_functions(&self) -> impl Iterator<Item = (&String, &FunctionInfo)> {
         self.functions.iter()
+    }
+
+    /// Define a supervisor (v2).
+    pub fn define_supervisor(&mut self, info: SupervisorInfo) {
+        self.supervisors.insert(info.name.clone(), info);
+    }
+
+    /// Look up a supervisor by name.
+    #[must_use]
+    pub fn get_supervisor(&self, name: &str) -> Option<&SupervisorInfo> {
+        self.supervisors.get(name)
+    }
+
+    /// Check if a supervisor is defined.
+    #[must_use]
+    pub fn has_supervisor(&self, name: &str) -> bool {
+        self.supervisors.contains_key(name)
+    }
+
+    /// Iterate over all supervisors.
+    pub fn iter_supervisors(&self) -> impl Iterator<Item = (&String, &SupervisorInfo)> {
+        self.supervisors.iter()
     }
 
     /// Define a record type.

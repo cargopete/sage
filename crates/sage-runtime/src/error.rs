@@ -79,6 +79,10 @@ pub enum SageError {
     /// User-raised error via `fail` expression.
     #[error("{0}")]
     User(String),
+
+    /// Error from supervisor (restart intensity exceeded, etc.).
+    #[error("Supervisor error: {0}")]
+    Supervisor(String),
 }
 
 impl SageError {
@@ -97,7 +101,9 @@ impl SageError {
     pub fn kind(&self) -> ErrorKind {
         match self {
             SageError::Llm(_) | SageError::Json(_) => ErrorKind::Llm,
-            SageError::Agent(_) | SageError::JoinError(_) => ErrorKind::Agent,
+            SageError::Agent(_) | SageError::JoinError(_) | SageError::Supervisor(_) => {
+                ErrorKind::Agent
+            }
             SageError::Type { .. } => ErrorKind::Runtime,
             // RFC-0011: Http, Io, and Tool errors are tool errors
             SageError::Http(_) | SageError::Tool(_) | SageError::Io(_) => ErrorKind::Tool,

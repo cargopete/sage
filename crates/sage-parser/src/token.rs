@@ -174,6 +174,25 @@ pub enum Token {
     KwTrace,
 
     // =========================================================================
+    // Supervision tree keywords (v2)
+    // =========================================================================
+    /// Supervisor declaration keyword.
+    #[token("supervisor")]
+    KwSupervisor,
+
+    /// Children block in supervisor.
+    #[token("children")]
+    KwChildren,
+
+    /// Supervision strategy keyword.
+    #[token("strategy")]
+    KwStrategy,
+
+    /// Restart policy keyword.
+    #[token("restart")]
+    KwRestart,
+
+    // =========================================================================
     // Type keywords
     // =========================================================================
     #[token("Int")]
@@ -408,6 +427,10 @@ impl Token {
                 | Token::KwError
                 | Token::KwTool
                 | Token::KwTrace
+                | Token::KwSupervisor
+                | Token::KwChildren
+                | Token::KwStrategy
+                | Token::KwRestart
         )
     }
 
@@ -523,6 +546,10 @@ impl std::fmt::Display for Token {
             Token::KwTest => write!(f, "test"),
             Token::KwMock => write!(f, "mock"),
             Token::KwTrace => write!(f, "trace"),
+            Token::KwSupervisor => write!(f, "supervisor"),
+            Token::KwChildren => write!(f, "children"),
+            Token::KwStrategy => write!(f, "strategy"),
+            Token::KwRestart => write!(f, "restart"),
 
             // Type keywords
             Token::TyInt => write!(f, "Int"),

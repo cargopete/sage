@@ -558,6 +558,61 @@ pub enum CheckError {
         #[label("generic error")]
         span: SourceSpan,
     },
+
+    // =========================================================================
+    // Supervision tree errors (v2)
+    // =========================================================================
+    #[error("supervisor `{name}` has no children")]
+    #[diagnostic(
+        code(sage::E060),
+        help("Oswyn explains: a supervisor must have at least one child to supervise")
+    )]
+    SupervisorNoChildren {
+        name: String,
+        #[label("add at least one child")]
+        span: SourceSpan,
+    },
+
+    #[error("child agent `{child}` does not exist")]
+    #[diagnostic(code(sage::E061))]
+    SupervisorChildNotFound {
+        child: String,
+        #[label("no agent with this name")]
+        span: SourceSpan,
+    },
+
+    #[error("child `{child}` is missing required belief `{belief}`")]
+    #[diagnostic(code(sage::E062))]
+    SupervisorChildMissingBelief {
+        child: String,
+        belief: String,
+        #[label("belief must be initialized")]
+        span: SourceSpan,
+    },
+
+    #[error("supervisor nesting depth exceeds maximum ({depth} > {max})")]
+    #[diagnostic(
+        code(sage::E063),
+        help("Oswyn suggests: flatten your supervision tree or reconsider architecture")
+    )]
+    SupervisorNestingTooDeep {
+        depth: usize,
+        max: usize,
+        #[label("nesting too deep")]
+        span: SourceSpan,
+    },
+
+    #[error("child `{child}` has Permanent restart but no @persistent fields")]
+    #[diagnostic(
+        code(sage::W004),
+        severity(warning),
+        help("Lyr observes: Permanent restart without persistence means state is lost on restart")
+    )]
+    PermanentWithoutPersistence {
+        child: String,
+        #[label("consider adding @persistent fields or using Transient restart")]
+        span: SourceSpan,
+    },
 }
 
 impl CheckError {
@@ -1091,6 +1146,57 @@ impl CheckError {
     pub fn generic(message: impl Into<String>, span: &Span) -> Self {
         Self::GenericError {
             message: message.into(),
+            span: to_source_span(span),
+        }
+    }
+
+    // =========================================================================
+    // Supervision tree helpers (v2)
+    // =========================================================================
+
+    /// Create a supervisor-no-children error (E060).
+    pub fn supervisor_no_children(name: impl Into<String>, span: &Span) -> Self {
+        Self::SupervisorNoChildren {
+            name: name.into(),
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create a supervisor-child-not-found error (E061).
+    pub fn supervisor_child_not_found(child: impl Into<String>, span: &Span) -> Self {
+        Self::SupervisorChildNotFound {
+            child: child.into(),
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create a supervisor-child-missing-belief error (E062).
+    pub fn supervisor_child_missing_belief(
+        child: impl Into<String>,
+        belief: impl Into<String>,
+        span: &Span,
+    ) -> Self {
+        Self::SupervisorChildMissingBelief {
+            child: child.into(),
+            belief: belief.into(),
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create a supervisor-nesting-too-deep error (E063).
+    #[must_use]
+    pub fn supervisor_nesting_too_deep(depth: usize, max: usize, span: &Span) -> Self {
+        Self::SupervisorNestingTooDeep {
+            depth,
+            max,
+            span: to_source_span(span),
+        }
+    }
+
+    /// Create a permanent-without-persistence warning (W004).
+    pub fn permanent_without_persistence(child: impl Into<String>, span: &Span) -> Self {
+        Self::PermanentWithoutPersistence {
+            child: child.into(),
             span: to_source_span(span),
         }
     }

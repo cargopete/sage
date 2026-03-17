@@ -3,10 +3,11 @@
 //! This module transforms a token stream into an AST.
 
 use crate::ast::{
-    AgentDecl, BeliefDecl, BinOp, Block, ClosureParam, ConstDecl, ElseBranch, EnumDecl, EventKind,
-    Expr, FieldInit, FnDecl, HandlerDecl, Literal, MapEntry, MatchArm, MockValue, ModDecl, Param,
-    Pattern, Program, RecordDecl, RecordField, Stmt, StringPart, StringTemplate, TestDecl,
-    ToolDecl, ToolFnDecl, UnaryOp, UseDecl, UseKind,
+    AgentDecl, BeliefDecl, BinOp, Block, ChildSpec, ClosureParam, ConstDecl, ElseBranch, EnumDecl,
+    EventKind, Expr, FieldInit, FnDecl, HandlerDecl, Literal, MapEntry, MatchArm, MockValue,
+    ModDecl, Param, Pattern, Program, RecordDecl, RecordField, RestartPolicy, Stmt, StringPart,
+    StringTemplate, SupervisionStrategy, SupervisorDecl, TestDecl, ToolDecl, ToolFnDecl, UnaryOp,
+    UseDecl, UseKind,
 };
 use crate::{Ident, Span, TypeExpr};
 use crate::{Spanned, Token};
@@ -59,6 +60,7 @@ fn program_parser(source: Arc<str>) -> impl Parser<Token, Program, Error = Parse
         .or(const_parser(source.clone()))
         .or(tool_parser(source.clone()))
         .or(agent_parser(source.clone()))
+        .or(supervisor_parser(source.clone()))
         .or(fn_parser(source.clone()))
         .or(test_parser(source.clone()))
         .recover_with(skip_then_retry_until([
@@ -70,6 +72,7 @@ fn program_parser(source: Arc<str>) -> impl Parser<Token, Program, Error = Parse
             Token::KwConst,
             Token::KwTool,
             Token::KwAgent,
+            Token::KwSupervisor,
             Token::KwFn,
             Token::KwRun,
             Token::KwTest,
@@ -89,6 +92,7 @@ fn program_parser(source: Arc<str>) -> impl Parser<Token, Program, Error = Parse
             let mut consts = Vec::new();
             let mut tools = Vec::new();
             let mut agents = Vec::new();
+            let mut supervisors = Vec::new();
             let mut functions = Vec::new();
             let mut tests = Vec::new();
 
@@ -101,6 +105,7 @@ fn program_parser(source: Arc<str>) -> impl Parser<Token, Program, Error = Parse
                     TopLevel::Const(c) => consts.push(c),
                     TopLevel::Tool(t) => tools.push(t),
                     TopLevel::Agent(a) => agents.push(a),
+                    TopLevel::Supervisor(s) => supervisors.push(s),
                     TopLevel::Function(f) => functions.push(f),
                     TopLevel::Test(t) => tests.push(t),
                 }
@@ -114,6 +119,7 @@ fn program_parser(source: Arc<str>) -> impl Parser<Token, Program, Error = Parse
                 consts,
                 tools,
                 agents,
+                supervisors,
                 functions,
                 tests,
                 run_agent,
@@ -132,6 +138,7 @@ enum TopLevel {
     Const(ConstDecl),
     Tool(ToolDecl),
     Agent(AgentDecl),
+    Supervisor(SupervisorDecl),
     Function(FnDecl),
     Test(TestDecl),
 }
@@ -482,6 +489,145 @@ fn test_parser(source: Arc<str>) -> impl Parser<Token, TopLevel, Error = ParseEr
                 span: make_span(&src2, span),
             })
         })
+}
+
+// =============================================================================
+// Supervisor parsers (v2 supervision trees)
+// =============================================================================
+
+/// Parser for a supervisor declaration.
+///
+/// Syntax:
+/// ```sage
+/// supervisor Name {
+///     strategy: OneForOne
+///     children {
+///         AgentName { restart: Permanent, belief: value }
+///     }
+/// }
+/// ```
+#[allow(clippy::needless_pass_by_value)]
+fn supervisor_parser(source: Arc<str>) -> impl Parser<Token, TopLevel, Error = ParseError> {
+    let src = source.clone();
+    let src2 = source.clone();
+    let src3 = source.clone();
+    let src4 = source.clone();
+
+    // Strategy parser: strategy: OneForOne | OneForAll | RestForOne
+    let strategy = just(Token::KwStrategy)
+        .ignore_then(just(Token::Colon))
+        .ignore_then(filter_map({
+            let src = src.clone();
+            move |span: Range<usize>, token| match token {
+                Token::Ident => {
+                    let text = &src[span.start..span.end];
+                    match text {
+                        "OneForOne" => Ok(SupervisionStrategy::OneForOne),
+                        "OneForAll" => Ok(SupervisionStrategy::OneForAll),
+                        "RestForOne" => Ok(SupervisionStrategy::RestForOne),
+                        _ => Err(Simple::custom(
+                            span,
+                            format!("unknown strategy `{text}`, expected OneForOne, OneForAll, or RestForOne"),
+                        )),
+                    }
+                }
+                _ => Err(Simple::expected_input_found(
+                    span,
+                    vec![Some(Token::Ident)],
+                    Some(token),
+                )),
+            }
+        }));
+
+    // Restart policy parser: restart: Permanent | Transient | Temporary
+    let restart_policy = just(Token::KwRestart)
+        .ignore_then(just(Token::Colon))
+        .ignore_then(filter_map({
+            let src = src2.clone();
+            move |span: Range<usize>, token| match token {
+                Token::Ident => {
+                    let text = &src[span.start..span.end];
+                    match text {
+                        "Permanent" => Ok(RestartPolicy::Permanent),
+                        "Transient" => Ok(RestartPolicy::Transient),
+                        "Temporary" => Ok(RestartPolicy::Temporary),
+                        _ => Err(Simple::custom(
+                            span,
+                            format!("unknown restart policy `{text}`, expected Permanent, Transient, or Temporary"),
+                        )),
+                    }
+                }
+                _ => Err(Simple::expected_input_found(
+                    span,
+                    vec![Some(Token::Ident)],
+                    Some(token),
+                )),
+            }
+        }));
+
+    // Field init for beliefs: name: value
+    let field_init = ident_token_parser(src3.clone())
+        .then_ignore(just(Token::Colon))
+        .then(expr_parser(src3.clone()))
+        .map_with_span({
+            let src = src3.clone();
+            move |(name, value), span: Range<usize>| FieldInit {
+                name,
+                value,
+                span: make_span(&src, span),
+            }
+        });
+
+    // Child spec: AgentName { restart: Permanent, belief1: value1, ... }
+    // Or just: AgentName { belief1: value1, ... } (defaults to Permanent)
+    let child_spec = ident_token_parser(src3.clone())
+        .then_ignore(just(Token::LBrace))
+        .then(restart_policy.then_ignore(just(Token::Comma).or_not()).or_not())
+        .then(
+            field_init
+                .separated_by(just(Token::Comma))
+                .allow_trailing(),
+        )
+        .then_ignore(just(Token::RBrace))
+        .map_with_span({
+            let src = src3.clone();
+            move |((agent_name, restart), beliefs), span: Range<usize>| ChildSpec {
+                agent_name,
+                restart: restart.unwrap_or_default(),
+                beliefs,
+                span: make_span(&src, span),
+            }
+        });
+
+    // Children block: children { child1 child2 ... }
+    let children = just(Token::KwChildren)
+        .ignore_then(
+            child_spec
+                .repeated()
+                .at_least(1)
+                .delimited_by(just(Token::LBrace), just(Token::RBrace)),
+        );
+
+    // Full supervisor declaration
+    just(Token::KwPub)
+        .or_not()
+        .then_ignore(just(Token::KwSupervisor))
+        .then(ident_token_parser(src4.clone()))
+        .then_ignore(just(Token::LBrace))
+        .then(strategy)
+        .then(children)
+        .then_ignore(just(Token::RBrace))
+        .map_with_span(
+            move |(((is_pub, name), strategy), children), span: Range<usize>| {
+                TopLevel::Supervisor(SupervisorDecl {
+                    is_pub: is_pub.is_some(),
+                    name,
+                    strategy,
+                    children,
+                    span: make_span(&src4, span),
+                })
+            },
+        )
 }
 
 // =============================================================================

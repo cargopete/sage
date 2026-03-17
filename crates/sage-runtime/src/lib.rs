@@ -11,6 +11,7 @@
 //! - Tracing and observability
 //! - Error handling
 //! - v2.0: Persistence for @persistent agent beliefs
+//! - v2.0: Supervision trees for agent lifecycle management
 
 #![forbid(unsafe_code)]
 
@@ -20,6 +21,7 @@ mod llm;
 pub mod mock;
 pub mod persistence;
 pub mod stdlib;
+pub mod supervisor;
 pub mod tools;
 pub mod tracing;
 
@@ -28,6 +30,7 @@ pub use error::{ErrorKind, SageError, SageResult};
 pub use llm::LlmClient;
 pub use mock::{MockLlmClient, MockQueue, MockResponse, MockToolRegistry};
 pub use persistence::{CheckpointStore, Persisted};
+pub use supervisor::{RestartConfig, RestartPolicy, Strategy, Supervisor};
 pub use tools::{DatabaseClient, DbRow, FsClient, HttpClient, HttpResponse, ShellClient, ShellResult};
 pub use tracing as trace;
 
@@ -38,6 +41,7 @@ pub mod prelude {
     pub use crate::llm::LlmClient;
     pub use crate::mock::{MockLlmClient, MockQueue, MockResponse, MockToolRegistry};
     pub use crate::persistence::{CheckpointStore, Persisted};
+    pub use crate::supervisor::{RestartConfig, RestartPolicy, Strategy, Supervisor};
     pub use crate::tools::{DatabaseClient, DbRow, FsClient, HttpClient, HttpResponse, ShellClient, ShellResult};
     pub use crate::tracing as trace;
 }

@@ -18,6 +18,8 @@ pub struct ProjectManifest {
     pub tools: ToolsConfig,
     #[serde(default)]
     pub persistence: PersistenceConfig,
+    #[serde(default)]
+    pub supervision: SupervisionConfig,
 }
 
 /// Tool configuration section of grove.toml.
@@ -93,6 +95,34 @@ fn default_persistence_backend() -> String {
 
 fn default_persistence_path() -> String {
     ".sage/checkpoints.db".to_string()
+}
+
+/// Supervision configuration for supervisor restart intensity limiting.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SupervisionConfig {
+    /// Maximum number of restarts allowed within the time window.
+    #[serde(default = "default_max_restarts")]
+    pub max_restarts: u32,
+    /// Time window in seconds for restart counting.
+    #[serde(default = "default_within_seconds")]
+    pub within_seconds: u64,
+}
+
+impl Default for SupervisionConfig {
+    fn default() -> Self {
+        Self {
+            max_restarts: default_max_restarts(),
+            within_seconds: default_within_seconds(),
+        }
+    }
+}
+
+fn default_max_restarts() -> u32 {
+    5
+}
+
+fn default_within_seconds() -> u64 {
+    60
 }
 
 /// The [test] section of grove.toml.
@@ -389,5 +419,31 @@ path = "./state"
         let manifest: ProjectManifest = toml::from_str(toml).unwrap();
         assert_eq!(manifest.persistence.backend, "file");
         assert_eq!(manifest.persistence.path, "./state");
+    }
+
+    #[test]
+    fn parse_supervision_default() {
+        let toml = r#"
+[project]
+name = "test"
+"#;
+        let manifest: ProjectManifest = toml::from_str(toml).unwrap();
+        assert_eq!(manifest.supervision.max_restarts, 5);
+        assert_eq!(manifest.supervision.within_seconds, 60);
+    }
+
+    #[test]
+    fn parse_supervision_custom() {
+        let toml = r#"
+[project]
+name = "test"
+
+[supervision]
+max_restarts = 10
+within_seconds = 120
+"#;
+        let manifest: ProjectManifest = toml::from_str(toml).unwrap();
+        assert_eq!(manifest.supervision.max_restarts, 10);
+        assert_eq!(manifest.supervision.within_seconds, 120);
     }
 }

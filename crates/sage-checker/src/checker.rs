@@ -3,12 +3,12 @@
 use crate::error::CheckError;
 use crate::scope::{
     resolve_type, resolve_type_with_params, AgentInfo, ConstInfo, EnumInfo, FunctionInfo,
-    RecordInfo, Scope, SymbolTable,
+    RecordInfo, Scope, SupervisorInfo, SymbolTable,
 };
 use crate::types::Type;
 use sage_parser::{
     AgentDecl, BinOp, Block, ConstDecl, EventKind, Expr, FnDecl, Literal, Pattern, Program, Stmt,
-    UnaryOp,
+    SupervisorDecl, UnaryOp,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -148,6 +148,10 @@ impl Checker {
         // Second pass: type check all declarations
         for agent in &program.agents {
             self.check_agent(agent);
+        }
+
+        for supervisor in &program.supervisors {
+            self.check_supervisor(supervisor);
         }
 
         for func in &program.functions {
@@ -378,6 +382,30 @@ impl Checker {
                 module_path: self.current_module.clone(),
             });
         }
+
+        // Collect supervisors (v2)
+        for supervisor in &program.supervisors {
+            if self.symbols.has_supervisor(&supervisor.name.name) {
+                self.errors.push(CheckError::duplicate_definition(
+                    &supervisor.name.name,
+                    &supervisor.span,
+                ));
+                continue;
+            }
+
+            let children: Vec<String> = supervisor
+                .children
+                .iter()
+                .map(|c| c.agent_name.name.clone())
+                .collect();
+
+            self.symbols.define_supervisor(SupervisorInfo {
+                name: supervisor.name.name.clone(),
+                children,
+                is_pub: supervisor.is_pub,
+                module_path: self.current_module.clone(),
+            });
+        }
     }
 
     // =========================================================================
@@ -474,6 +502,77 @@ impl Checker {
         self.current_agent = None;
         self.receives_type = None;
         self.agent_has_error_handler = false;
+    }
+
+    /// Check a supervisor declaration (v2 supervision trees).
+    fn check_supervisor(&mut self, supervisor: &SupervisorDecl) {
+        // E060: Supervisor has no children
+        if supervisor.children.is_empty() {
+            self.errors.push(CheckError::supervisor_no_children(
+                &supervisor.name.name,
+                &supervisor.span,
+            ));
+            return;
+        }
+
+        // Check each child specification
+        for child in &supervisor.children {
+            // E061: Child agent doesn't exist
+            let agent_info = if let Some(info) = self.symbols.get_agent(&child.agent_name.name) {
+                info.clone()
+            } else {
+                self.errors.push(CheckError::supervisor_child_not_found(
+                    &child.agent_name.name,
+                    &child.span,
+                ));
+                continue;
+            };
+
+            // Check that all required beliefs are initialized
+            let provided_beliefs: HashSet<String> =
+                child.beliefs.iter().map(|b| b.name.name.clone()).collect();
+
+            for (belief_name, _belief_ty) in &agent_info.beliefs {
+                if !provided_beliefs.contains(belief_name) {
+                    // E062: Child missing required belief
+                    self.errors.push(CheckError::supervisor_child_missing_belief(
+                        &child.agent_name.name,
+                        belief_name,
+                        &child.span,
+                    ));
+                }
+            }
+
+            // Check belief types match
+            for field_init in &child.beliefs {
+                if let Some(expected_ty) = agent_info.beliefs.get(&field_init.name.name) {
+                    let found_ty = self.check_expr(&field_init.value);
+                    if !found_ty.is_compatible_with(expected_ty) {
+                        self.errors.push(CheckError::type_mismatch(
+                            expected_ty.to_string(),
+                            found_ty.to_string(),
+                            field_init.value.span(),
+                        ));
+                    }
+                } else {
+                    // Unknown belief for this agent
+                    self.errors.push(CheckError::unknown_field(
+                        &field_init.name.name,
+                        &field_init.span,
+                    ));
+                }
+            }
+
+            // W004: Permanent restart without @persistent fields
+            // Note: Currently we don't track which agents have @persistent fields
+            // in AgentInfo. This would require extending AgentInfo.
+            // For now, we skip this warning.
+        }
+
+        // E063: Supervisor nesting depth
+        // Currently, we don't support tracking nesting depth of supervisors.
+        // This would require a more complex analysis to detect nested supervisors.
+        // For now, we allow one level of supervisor-manages-supervisor.
     }
 
     fn check_function(&mut self, func: &FnDecl) {
@@ -3514,33 +3613,41 @@ impl Checker {
 
     fn validate_entry_agent(&mut self, program: &Program) {
         // If there's no run statement, this is a library module - no entry validation needed
-        let Some(run_agent) = &program.run_agent else {
+        let Some(run_entry) = &program.run_agent else {
             return;
         };
 
-        let entry_name = &run_agent.name;
+        let entry_name = &run_entry.name;
 
-        let Some(agent) = self.symbols.get_agent(entry_name).cloned() else {
-            self.errors
-                .push(CheckError::undefined_agent(entry_name, &run_agent.span));
+        // First check if it's an agent
+        if let Some(agent) = self.symbols.get_agent(entry_name).cloned() {
+            // Entry agent must have no beliefs
+            if !agent.beliefs.is_empty() {
+                self.errors.push(CheckError::entry_agent_has_beliefs(
+                    entry_name,
+                    &run_entry.span,
+                ));
+            }
+
+            // Entry agent must have on start handler
+            if !agent.has_start_handler {
+                self.errors.push(CheckError::entry_agent_no_start(
+                    entry_name,
+                    &run_entry.span,
+                ));
+            }
             return;
-        };
-
-        // Entry agent must have no beliefs
-        if !agent.beliefs.is_empty() {
-            self.errors.push(CheckError::entry_agent_has_beliefs(
-                entry_name,
-                &run_agent.span,
-            ));
         }
 
-        // Entry agent must have on start handler
-        if !agent.has_start_handler {
-            self.errors.push(CheckError::entry_agent_no_start(
-                entry_name,
-                &run_agent.span,
-            ));
+        // Check if it's a supervisor
+        if self.symbols.get_supervisor(entry_name).is_some() {
+            // Supervisors are valid entry points, no additional validation needed
+            return;
         }
+
+        // Neither agent nor supervisor found
+        self.errors
+            .push(CheckError::undefined_agent(entry_name, &run_entry.span));
     }
 
     // =========================================================================
@@ -3868,6 +3975,32 @@ impl MultiModuleChecker {
                 module_path: module_path.clone(),
             });
         }
+
+        // Collect supervisors (v2)
+        for supervisor in &program.supervisors {
+            let full_name = Self::make_qualified_name(module_path, &supervisor.name.name);
+
+            if self.symbols.has_supervisor(&full_name) {
+                self.errors.push(CheckError::duplicate_definition(
+                    &full_name,
+                    &supervisor.span,
+                ));
+                continue;
+            }
+
+            let children: Vec<String> = supervisor
+                .children
+                .iter()
+                .map(|c| c.agent_name.name.clone())
+                .collect();
+
+            self.symbols.define_supervisor(SupervisorInfo {
+                name: supervisor.name.name.clone(),
+                children,
+                is_pub: supervisor.is_pub,
+                module_path: module_path.clone(),
+            });
+        }
     }
 
     fn resolve_imports(&mut self, module_path: &ModulePath, program: &Program, tree: &ModuleTree) {
@@ -4099,11 +4232,11 @@ impl MultiModuleChecker {
     }
 
     fn validate_entry_agent(&mut self, program: &Program) {
-        let Some(run_agent) = &program.run_agent else {
+        let Some(run_entry) = &program.run_agent else {
             return;
         };
 
-        let entry_name = &run_agent.name;
+        let entry_name = &run_entry.name;
 
         // Look up the agent (it should be in the root module)
         let agent = self
@@ -4111,27 +4244,39 @@ impl MultiModuleChecker {
             .iter_agents()
             .find(|(_, info)| info.module_path.is_empty() && info.name == *entry_name);
 
-        let Some((_, agent)) = agent else {
-            self.errors
-                .push(CheckError::undefined_agent(entry_name, &run_agent.span));
+        if let Some((_, agent)) = agent {
+            let agent = agent.clone();
+
+            if !agent.beliefs.is_empty() {
+                self.errors.push(CheckError::entry_agent_has_beliefs(
+                    entry_name,
+                    &run_entry.span,
+                ));
+            }
+
+            if !agent.has_start_handler {
+                self.errors.push(CheckError::entry_agent_no_start(
+                    entry_name,
+                    &run_entry.span,
+                ));
+            }
             return;
-        };
-
-        let agent = agent.clone();
-
-        if !agent.beliefs.is_empty() {
-            self.errors.push(CheckError::entry_agent_has_beliefs(
-                entry_name,
-                &run_agent.span,
-            ));
         }
 
-        if !agent.has_start_handler {
-            self.errors.push(CheckError::entry_agent_no_start(
-                entry_name,
-                &run_agent.span,
-            ));
+        // Check if it's a supervisor in the root module
+        let supervisor = self
+            .symbols
+            .iter_supervisors()
+            .find(|(_, info)| info.module_path.is_empty() && info.name == *entry_name);
+
+        if supervisor.is_some() {
+            // Supervisors are valid entry points
+            return;
         }
+
+        // Neither agent nor supervisor found
+        self.errors
+            .push(CheckError::undefined_agent(entry_name, &run_entry.span));
     }
 
     fn make_qualified_name(module_path: &ModulePath, name: &str) -> String {

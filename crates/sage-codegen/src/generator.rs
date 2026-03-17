@@ -4,7 +4,8 @@ use crate::emit::Emitter;
 use sage_loader::ModuleTree;
 use sage_parser::{
     AgentDecl, BinOp, Block, ConstDecl, EnumDecl, EventKind, Expr, FnDecl, Literal, MockValue,
-    Program, RecordDecl, Stmt, StringPart, TestDecl, TypeExpr, UnaryOp,
+    Program, RecordDecl, RestartPolicy, Stmt, StringPart, SupervisionStrategy, SupervisorDecl,
+    TestDecl, TypeExpr, UnaryOp,
 };
 
 /// How to specify the sage-runtime dependency in generated Cargo.toml.
@@ -216,15 +217,28 @@ impl Generator {
             self.emit.blank_line();
         }
 
+        // Supervisors
+        for supervisor in &program.supervisors {
+            self.generate_supervisor(supervisor, program);
+            self.emit.blank_line();
+        }
+
         // Entry point (required for executables)
-        if let Some(run_agent) = &program.run_agent {
-            // Find the entry agent
+        if let Some(run_entry) = &program.run_agent {
+            // First check if it's an agent
             if let Some(agent) = program
                 .agents
                 .iter()
-                .find(|a| a.name.name == run_agent.name)
+                .find(|a| a.name.name == run_entry.name)
             {
                 self.generate_main(agent);
+            } else if let Some(supervisor) = program
+                .supervisors
+                .iter()
+                .find(|s| s.name.name == run_entry.name)
+            {
+                // It's a supervisor entry point
+                self.generate_supervisor_main(supervisor, program);
             }
         }
 
@@ -277,6 +291,11 @@ impl Generator {
                     self.generate_agent(agent);
                     self.emit.blank_line();
                 }
+
+                for supervisor in &module.program.supervisors {
+                    self.generate_supervisor(supervisor, &module.program);
+                    self.emit.blank_line();
+                }
             }
         }
 
@@ -309,16 +328,29 @@ impl Generator {
                 self.emit.blank_line();
             }
 
+            for supervisor in &root_module.program.supervisors {
+                self.generate_supervisor(supervisor, &root_module.program);
+                self.emit.blank_line();
+            }
+
             // Entry point (only in root module)
-            if let Some(run_agent) = &root_module.program.run_agent {
-                // Find the entry agent
+            if let Some(run_entry) = &root_module.program.run_agent {
+                // First check if it's an agent
                 if let Some(agent) = root_module
                     .program
                     .agents
                     .iter()
-                    .find(|a| a.name.name == run_agent.name)
+                    .find(|a| a.name.name == run_entry.name)
                 {
                     self.generate_main(agent);
+                } else if let Some(supervisor) = root_module
+                    .program
+                    .supervisors
+                    .iter()
+                    .find(|s| s.name.name == run_entry.name)
+                {
+                    // It's a supervisor entry point
+                    self.generate_supervisor_main(supervisor, &root_module.program);
                 }
             }
         }
@@ -1293,6 +1325,285 @@ serde_json = "1"
         self.emit.writeln("}");
         self.emit.dedent();
         self.emit.writeln("};");
+        self.emit.writeln("Ok(())");
+
+        self.emit.dedent();
+        self.emit.writeln("}");
+    }
+
+    /// Generate a supervisor declaration.
+    ///
+    /// This generates a struct for the supervisor and doesn't generate handlers
+    /// since the supervisor itself doesn't have handlers - it manages child agents.
+    fn generate_supervisor(&mut self, supervisor: &SupervisorDecl, _program: &Program) {
+        let name = &supervisor.name.name;
+
+        // Comment indicating this is a supervisor
+        self.emit.write("// Supervisor: ");
+        self.emit.writeln(name);
+
+        // Struct definition with visibility (just a marker struct)
+        if supervisor.is_pub {
+            self.emit.write("pub ");
+        }
+        self.emit.write("struct ");
+        self.emit.write(name);
+        self.emit.writeln(";");
+    }
+
+    /// Generate the main function for a supervisor entry point.
+    ///
+    /// This creates a Supervisor instance, adds all child agents with their
+    /// spawn functions and restart policies, then runs the supervisor.
+    fn generate_supervisor_main(&mut self, supervisor: &SupervisorDecl, program: &Program) {
+        let name = &supervisor.name.name;
+
+        self.emit.writeln("#[tokio::main]");
+        self.emit
+            .writeln("async fn main() -> Result<(), Box<dyn std::error::Error>> {");
+        self.emit.indent();
+
+        // Initialize tracing
+        self.emit.writeln("sage_runtime::trace::init();");
+        self.emit.writeln("");
+
+        // Create the supervisor with the configured strategy
+        // TODO: Pass supervision config from grove.toml instead of using defaults
+        self.emit.write("let mut supervisor = Supervisor::new(Strategy::");
+        match supervisor.strategy {
+            SupervisionStrategy::OneForOne => self.emit.write("OneForOne"),
+            SupervisionStrategy::OneForAll => self.emit.write("OneForAll"),
+            SupervisionStrategy::RestForOne => self.emit.write("RestForOne"),
+        }
+        self.emit.writeln(", RestartConfig::default());");
+        self.emit.writeln("");
+
+        // Add each child with its spawn function
+        for child in &supervisor.children {
+            let child_agent_name = &child.agent_name.name;
+
+            // Find the agent declaration to understand its structure
+            let agent = program
+                .agents
+                .iter()
+                .find(|a| a.name.name == *child_agent_name);
+
+            // Determine restart policy
+            let restart_policy = match child.restart {
+                RestartPolicy::Permanent => "Permanent",
+                RestartPolicy::Transient => "Transient",
+                RestartPolicy::Temporary => "Temporary",
+            };
+
+            self.emit.write("supervisor.add_child(\"");
+            self.emit.write(child_agent_name);
+            self.emit.write("\", RestartPolicy::");
+            self.emit.write(restart_policy);
+            self.emit.writeln(", || {");
+            self.emit.indent();
+
+            // Generate the spawn closure body
+            self.emit.writeln("async {");
+            self.emit.indent();
+
+            // Check if agent has tools, beliefs, or persistence
+            let (has_tools, has_beliefs, has_persistent) = if let Some(agent) = agent {
+                let has_tools = !agent.tool_uses.is_empty();
+                let has_beliefs = !agent.beliefs.is_empty();
+                let has_persistent = agent.beliefs.iter().any(|b| b.is_persistent);
+                (has_tools, has_beliefs, has_persistent)
+            } else {
+                (false, false, false)
+            };
+
+            // Initialize checkpoint store if needed
+            if has_persistent {
+                self.emit.writeln("let _checkpoint: std::sync::Arc<dyn CheckpointStore> = std::sync::Arc::new(");
+                self.emit.indent();
+                self.emit.writeln("sage_runtime::persistence::MemoryCheckpointStore::new()");
+                self.emit.dedent();
+                self.emit.writeln(");");
+                self.emit.write("let _checkpoint_key = \"");
+                self.emit.write(child_agent_name);
+                self.emit.writeln("\".to_string();");
+            }
+
+            // Initialize async tools (like Database)
+            if let Some(agent) = agent {
+                for tool_use in &agent.tool_uses {
+                    if tool_use.name == "Database" {
+                        self.emit.write("let _db_client = DatabaseClient::from_env().await");
+                        self.emit.writeln(".expect(\"Failed to connect to database\");");
+                    }
+                }
+            }
+
+            // Construct the agent
+            if has_tools || has_beliefs {
+                self.emit.write("let agent = ");
+                self.emit.write(child_agent_name);
+                self.emit.writeln(" {");
+                self.emit.indent();
+
+                // Add checkpoint fields if persistent
+                if has_persistent {
+                    self.emit.writeln("_checkpoint: std::sync::Arc::clone(&_checkpoint),");
+                    self.emit.writeln("_checkpoint_key: _checkpoint_key.clone(),");
+                }
+
+                // Add tool fields
+                if let Some(agent) = agent {
+                    for tool_use in &agent.tool_uses {
+                        if tool_use.name == "Database" {
+                            self.emit.write(&tool_use.name.to_lowercase());
+                            self.emit.writeln(": _db_client,");
+                        } else {
+                            self.emit.write(&tool_use.name.to_lowercase());
+                            self.emit.write(": ");
+                            self.emit.write(&tool_use.name);
+                            self.emit.writeln("Client::from_env(),");
+                        }
+                    }
+                }
+
+                // Add belief fields from child spec's initial values
+                if let Some(agent) = agent {
+                    for belief in &agent.beliefs {
+                        // Check if there's an initial value in child spec
+                        let init_value = child.beliefs.iter().find(|f| f.name.name == belief.name.name);
+
+                        self.emit.write(&belief.name.name);
+                        self.emit.write(": ");
+
+                        if belief.is_persistent {
+                            self.emit.write("Persisted::new(std::sync::Arc::clone(&_checkpoint), &_checkpoint_key, \"");
+                            self.emit.write(&belief.name.name);
+                            self.emit.write("\")");
+                        } else if let Some(init) = init_value {
+                            // Use the initial value from child spec
+                            self.generate_expr(&init.value);
+                        } else {
+                            // Use default
+                            self.emit.write("Default::default()");
+                        }
+                        self.emit.writeln(",");
+                    }
+                }
+
+                self.emit.dedent();
+                self.emit.writeln("};");
+            } else {
+                self.emit.write("let agent = ");
+                self.emit.write(child_agent_name);
+                self.emit.writeln(";");
+            }
+
+            // Check for waking handler
+            let has_waking = agent
+                .map(|a| a.handlers.iter().any(|h| matches!(h.event, EventKind::Waking)))
+                .unwrap_or(false);
+
+            // Check for error handler
+            let has_error_handler = agent
+                .map(|a| a.handlers.iter().any(|h| matches!(h.event, EventKind::Error { .. })))
+                .unwrap_or(false);
+
+            // Check for stop handler
+            let has_stop_handler = agent
+                .map(|a| a.handlers.iter().any(|h| matches!(h.event, EventKind::Stop | EventKind::Resting)))
+                .unwrap_or(false);
+
+            // Create the agent handle and run it
+            self.emit.writeln("let handle = sage_runtime::spawn(|mut ctx| async move {");
+            self.emit.indent();
+
+            // Call on_waking if present
+            if has_waking {
+                self.emit.writeln("agent.on_waking().await;");
+            }
+
+            // Generate the main execution with error handling
+            if has_error_handler {
+                self.emit.writeln("let result = match agent.on_start(&mut ctx).await {");
+                self.emit.indent();
+                self.emit.writeln("Ok(result) => Ok(result),");
+                self.emit.writeln("Err(e) => agent.on_error(e, &mut ctx).await,");
+                self.emit.dedent();
+                self.emit.writeln("};");
+            } else {
+                self.emit.writeln("let result = agent.on_start(&mut ctx).await;");
+            }
+
+            // Call on_stop if present
+            if has_stop_handler {
+                self.emit.writeln("agent.on_stop().await;");
+            }
+
+            self.emit.writeln("result");
+            self.emit.dedent();
+            self.emit.writeln("});");
+
+            // Wait for the handle result
+            self.emit.writeln("handle.result().await.map_err(|e| SageError::Agent(e.to_string()))?");
+
+            self.emit.dedent();
+            self.emit.writeln("}");
+            self.emit.dedent();
+            self.emit.writeln("});");
+            self.emit.writeln("");
+        }
+
+        // Set up graceful shutdown signal handling
+        self.emit.writeln("let ctrl_c = async { tokio::signal::ctrl_c().await.ok() };");
+        self.emit.writeln("");
+        self.emit.writeln("#[cfg(unix)]");
+        self.emit.writeln("let terminate = async {");
+        self.emit.indent();
+        self.emit.writeln("if let Ok(mut s) = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {");
+        self.emit.indent();
+        self.emit.writeln("s.recv().await;");
+        self.emit.dedent();
+        self.emit.writeln("} else {");
+        self.emit.indent();
+        self.emit.writeln("std::future::pending::<()>().await;");
+        self.emit.dedent();
+        self.emit.writeln("}");
+        self.emit.dedent();
+        self.emit.writeln("};");
+        self.emit.writeln("#[cfg(not(unix))]");
+        self.emit.writeln("let terminate = std::future::pending::<()>();");
+        self.emit.writeln("");
+
+        // Run the supervisor with signal handling
+        self.emit.write("eprintln!(\"Starting supervisor '");
+        self.emit.write(name);
+        self.emit.writeln("' with {} children...\", supervisor.children.len());");
+        self.emit.writeln("");
+        self.emit.writeln("let result = tokio::select! {");
+        self.emit.indent();
+        self.emit.writeln("result = supervisor.run() => result,");
+        self.emit.writeln("_ = ctrl_c => {");
+        self.emit.indent();
+        self.emit.writeln("eprintln!(\"\\nReceived interrupt signal, shutting down supervisor...\");");
+        self.emit.writeln("return Ok(());");
+        self.emit.dedent();
+        self.emit.writeln("}");
+        self.emit.writeln("_ = terminate => {");
+        self.emit.indent();
+        self.emit.writeln("eprintln!(\"Received terminate signal, shutting down supervisor...\");");
+        self.emit.writeln("return Ok(());");
+        self.emit.dedent();
+        self.emit.writeln("}");
+        self.emit.dedent();
+        self.emit.writeln("};");
+        self.emit.writeln("");
+        self.emit.writeln("if let Err(e) = result {");
+        self.emit.indent();
+        self.emit.writeln("eprintln!(\"Supervisor error: {}\", e);");
+        self.emit.writeln("return Err(e.into());");
+        self.emit.dedent();
+        self.emit.writeln("}");
+        self.emit.writeln("");
         self.emit.writeln("Ok(())");
 
         self.emit.dedent();
@@ -3455,5 +3766,40 @@ run Main;
         // Should have both mock client and registry
         assert!(output.contains("MockLlmClient::with_responses"));
         assert!(output.contains("MockToolRegistry::new()"));
+    }
+
+    #[test]
+    fn generate_supervisor_declaration() {
+        let source = r#"
+            agent Worker {
+                count: Int
+
+                on start {
+                    yield(self.count);
+                }
+            }
+
+            supervisor AppSupervisor {
+                strategy: OneForOne
+
+                children {
+                    Worker { restart: Transient, count: 0 }
+                }
+            }
+
+            run AppSupervisor;
+        "#;
+
+        let output = generate_source(source);
+
+        // Check supervisor struct is generated
+        assert!(output.contains("// Supervisor: AppSupervisor"));
+        assert!(output.contains("struct AppSupervisor;"));
+
+        // Check supervisor main is generated
+        assert!(output.contains("Supervisor::new(Strategy::OneForOne"));
+        assert!(output.contains("RestartConfig::default()"));
+        assert!(output.contains("supervisor.add_child(\"Worker\", RestartPolicy::Transient"));
+        assert!(output.contains("supervisor.run()"));
     }
 }

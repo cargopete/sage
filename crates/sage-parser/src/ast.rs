@@ -27,11 +27,13 @@ pub struct Program {
     pub tools: Vec<ToolDecl>,
     /// Agent declarations.
     pub agents: Vec<AgentDecl>,
+    /// Supervisor declarations (v2 supervision trees).
+    pub supervisors: Vec<SupervisorDecl>,
     /// Function declarations.
     pub functions: Vec<FnDecl>,
     /// Test declarations (RFC-0012). Only valid in `_test.sg` files.
     pub tests: Vec<TestDecl>,
-    /// The entry-point agent (from `run AgentName`).
+    /// The entry-point agent or supervisor (from `run Name`).
     /// None for library modules that don't have an entry point.
     pub run_agent: Option<Ident>,
     /// Span covering the entire program.
@@ -339,6 +341,97 @@ pub struct TestDecl {
     /// The test body.
     pub body: Block,
     /// Span covering the entire declaration.
+    pub span: Span,
+}
+
+// =============================================================================
+// Supervision tree declarations (v2)
+// =============================================================================
+
+/// A supervisor declaration for OTP-style supervision trees.
+///
+/// Example:
+/// ```sage
+/// supervisor AppSupervisor {
+///     strategy: OneForOne
+///     children {
+///         DatabaseSteward { restart: Permanent, schema_version: 0 }
+///         APISteward { restart: Transient, routes_generated: false }
+///     }
+/// }
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct SupervisorDecl {
+    /// Whether this supervisor is public.
+    pub is_pub: bool,
+    /// The supervisor's name.
+    pub name: Ident,
+    /// The supervision strategy.
+    pub strategy: SupervisionStrategy,
+    /// Child specifications.
+    pub children: Vec<ChildSpec>,
+    /// Span covering the declaration.
+    pub span: Span,
+}
+
+/// Supervision strategy (inspired by Erlang/OTP).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SupervisionStrategy {
+    /// Restart only the failed child.
+    OneForOne,
+    /// Restart all children if one fails.
+    OneForAll,
+    /// Restart the failed child and all children started after it.
+    RestForOne,
+}
+
+impl fmt::Display for SupervisionStrategy {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SupervisionStrategy::OneForOne => write!(f, "OneForOne"),
+            SupervisionStrategy::OneForAll => write!(f, "OneForAll"),
+            SupervisionStrategy::RestForOne => write!(f, "RestForOne"),
+        }
+    }
+}
+
+/// Restart policy for supervised children.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum RestartPolicy {
+    /// Always restart, regardless of exit reason.
+    #[default]
+    Permanent,
+    /// Restart only on abnormal termination (error).
+    Transient,
+    /// Never restart.
+    Temporary,
+}
+
+impl fmt::Display for RestartPolicy {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RestartPolicy::Permanent => write!(f, "Permanent"),
+            RestartPolicy::Transient => write!(f, "Transient"),
+            RestartPolicy::Temporary => write!(f, "Temporary"),
+        }
+    }
+}
+
+/// A child specification within a supervisor.
+///
+/// Example:
+/// ```sage
+/// DatabaseSteward { restart: Permanent, schema_version: 0 }
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct ChildSpec {
+    /// The agent type to spawn.
+    pub agent_name: Ident,
+    /// Restart policy for this child.
+    pub restart: RestartPolicy,
+    /// Initial belief values.
+    pub beliefs: Vec<FieldInit>,
+    /// Span covering the child spec.
     pub span: Span,
 }
 
