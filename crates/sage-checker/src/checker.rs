@@ -415,9 +415,9 @@ impl Checker {
                 self.define_var(&param_name.name, Type::Named("Error".to_string()));
             }
 
-            // Track if we're in a stop handler (emit is prohibited)
+            // Track if we're in a stop/resting handler (yield is prohibited)
             let old_in_stop_handler = self.in_stop_handler;
-            if matches!(handler.event, EventKind::Stop) {
+            if matches!(handler.event, EventKind::Stop | EventKind::Resting) {
                 self.in_stop_handler = true;
             }
 
@@ -432,6 +432,42 @@ impl Checker {
             if !self.used_beliefs.contains(&belief.name.name) {
                 self.errors
                     .push(CheckError::unused_belief(&belief.name.name, &belief.span));
+            }
+        }
+
+        // Check @persistent fields have serializable types (E052)
+        for belief in &agent.beliefs {
+            if belief.is_persistent {
+                let ty = resolve_type(&belief.ty);
+                if !ty.is_serializable() {
+                    self.errors
+                        .push(CheckError::persistent_field_not_serializable(
+                            &belief.name.name,
+                            ty.to_string(),
+                            &belief.span,
+                        ));
+                }
+            }
+        }
+
+        // Check for `on waking` without persistent fields (W006)
+        let has_persistent = agent.beliefs.iter().any(|b| b.is_persistent);
+        let has_waking = agent
+            .handlers
+            .iter()
+            .any(|h| matches!(h.event, EventKind::Waking));
+        if has_waking && !has_persistent {
+            // Find the waking handler's span for the warning
+            if let Some(waking_handler) = agent
+                .handlers
+                .iter()
+                .find(|h| matches!(h.event, EventKind::Waking))
+            {
+                self.errors
+                    .push(CheckError::waking_without_persistent_fields(
+                        &agent.name.name,
+                        &waking_handler.body.span,
+                    ));
             }
         }
 
@@ -1612,6 +1648,7 @@ impl Checker {
                 }
 
                 // Return Generic type if enum has type params, otherwise Named
+                // Special case: Option and Result use their built-in Type variants
                 if enum_info.type_params.is_empty() {
                     Type::Named(enum_name.name.clone())
                 } else {
@@ -1620,7 +1657,20 @@ impl Checker {
                         .iter()
                         .map(|p| bindings.get(p).cloned().unwrap_or(Type::Error))
                         .collect();
-                    Type::Generic(enum_name.name.clone(), resolved_type_args)
+
+                    // Map built-in enum types to their native Type variants
+                    match enum_name.name.as_str() {
+                        "Option" if resolved_type_args.len() == 1 => {
+                            Type::Option(Box::new(resolved_type_args[0].clone()))
+                        }
+                        "Result" if resolved_type_args.len() == 2 => {
+                            Type::Result(
+                                Box::new(resolved_type_args[0].clone()),
+                                Box::new(resolved_type_args[1].clone()),
+                            )
+                        }
+                        _ => Type::Generic(enum_name.name.clone(), resolved_type_args),
+                    }
                 }
             }
 
@@ -4154,9 +4204,9 @@ impl<'a> ModuleChecker<'a> {
                 self.define_var(&param_name.name, Type::Named("Error".to_string()));
             }
 
-            // Track if we're in a stop handler (emit is prohibited)
+            // Track if we're in a stop/resting handler (yield is prohibited)
             let old_in_stop_handler = self.in_stop_handler;
-            if matches!(handler.event, EventKind::Stop) {
+            if matches!(handler.event, EventKind::Stop | EventKind::Resting) {
                 self.in_stop_handler = true;
             }
 
@@ -4171,6 +4221,42 @@ impl<'a> ModuleChecker<'a> {
             if !self.used_beliefs.contains(&belief.name.name) {
                 self.errors
                     .push(CheckError::unused_belief(&belief.name.name, &belief.span));
+            }
+        }
+
+        // Check @persistent fields have serializable types (E052)
+        for belief in &agent.beliefs {
+            if belief.is_persistent {
+                let ty = resolve_type(&belief.ty);
+                if !ty.is_serializable() {
+                    self.errors
+                        .push(CheckError::persistent_field_not_serializable(
+                            &belief.name.name,
+                            ty.to_string(),
+                            &belief.span,
+                        ));
+                }
+            }
+        }
+
+        // Check for `on waking` without persistent fields (W006)
+        let has_persistent = agent.beliefs.iter().any(|b| b.is_persistent);
+        let has_waking = agent
+            .handlers
+            .iter()
+            .any(|h| matches!(h.event, EventKind::Waking));
+        if has_waking && !has_persistent {
+            // Find the waking handler's span for the warning
+            if let Some(waking_handler) = agent
+                .handlers
+                .iter()
+                .find(|h| matches!(h.event, EventKind::Waking))
+            {
+                self.errors
+                    .push(CheckError::waking_without_persistent_fields(
+                        &agent.name.name,
+                        &waking_handler.body.span,
+                    ));
             }
         }
 
@@ -5307,6 +5393,7 @@ impl<'a> ModuleChecker<'a> {
                 }
 
                 // Return Generic type if enum has type params, otherwise Named
+                // Special case: Option and Result use their built-in Type variants
                 if enum_info.type_params.is_empty() {
                     Type::Named(enum_name.name.clone())
                 } else {
@@ -5315,7 +5402,20 @@ impl<'a> ModuleChecker<'a> {
                         .iter()
                         .map(|p| bindings.get(p).cloned().unwrap_or(Type::Error))
                         .collect();
-                    Type::Generic(enum_name.name.clone(), resolved_type_args)
+
+                    // Map built-in enum types to their native Type variants
+                    match enum_name.name.as_str() {
+                        "Option" if resolved_type_args.len() == 1 => {
+                            Type::Option(Box::new(resolved_type_args[0].clone()))
+                        }
+                        "Result" if resolved_type_args.len() == 2 => {
+                            Type::Result(
+                                Box::new(resolved_type_args[0].clone()),
+                                Box::new(resolved_type_args[1].clone()),
+                            )
+                        }
+                        _ => Type::Generic(enum_name.name.clone(), resolved_type_args),
+                    }
                 }
             }
 

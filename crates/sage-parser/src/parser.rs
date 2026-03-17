@@ -491,7 +491,6 @@ fn test_parser(source: Arc<str>) -> impl Parser<Token, TopLevel, Error = ParseEr
 /// Parser for an agent declaration.
 #[allow(clippy::needless_pass_by_value)]
 fn agent_parser(source: Arc<str>) -> impl Parser<Token, TopLevel, Error = ParseError> {
-    let src = source.clone();
     let src2 = source.clone();
     let src3 = source.clone();
     let src4 = source.clone();
@@ -507,15 +506,40 @@ fn agent_parser(source: Arc<str>) -> impl Parser<Token, TopLevel, Error = ParseE
         .or_not()
         .map(|tools| tools.unwrap_or_default());
 
-    // Agent state fields: `name: Type` (no `belief` keyword in RFC-0005)
+    // Agent state fields: `name: Type` or `@persistent name: Type`
     // We still call them "beliefs" internally for backwards compatibility
-    let belief = ident_token_parser(src.clone())
+    let src_annot = source.clone();
+    let persistent_annotation = just(Token::At)
+        .ignore_then(filter_map(move |span: Range<usize>, token| match token {
+            Token::Ident => {
+                let text = &src_annot[span.start..span.end];
+                if text == "persistent" {
+                    Ok(true)
+                } else {
+                    Err(Simple::custom(
+                        span,
+                        format!("unknown annotation @{}, expected @persistent", text),
+                    ))
+                }
+            }
+            _ => Err(Simple::expected_input_found(
+                span,
+                vec![Some(Token::Ident)],
+                Some(token),
+            )),
+        }))
+        .or_not();
+
+    let src_belief = source.clone();
+    let belief = persistent_annotation
+        .then(ident_token_parser(src_belief.clone()))
         .then_ignore(just(Token::Colon))
-        .then(type_parser(src.clone()))
-        .map_with_span(move |(name, ty), span: Range<usize>| BeliefDecl {
+        .then(type_parser(src_belief.clone()))
+        .map_with_span(move |((is_persistent, name), ty), span: Range<usize>| BeliefDecl {
+            is_persistent: is_persistent.unwrap_or(false),
             name,
             ty,
-            span: make_span(&src, span),
+            span: make_span(&src_belief, span),
         });
 
     let handler = just(Token::KwOn)
@@ -563,8 +587,15 @@ fn agent_parser(source: Arc<str>) -> impl Parser<Token, TopLevel, Error = ParseE
 fn event_kind_parser(source: Arc<str>) -> impl Parser<Token, EventKind, Error = ParseError> {
     let src = source.clone();
 
+    // v2 lifecycle: waking runs before start
+    let waking = just(Token::KwWaking).to(EventKind::Waking);
     let start = just(Token::KwStart).to(EventKind::Start);
+    // v2 lifecycle: pause/resume for graceful suspend
+    let pause = just(Token::KwPause).to(EventKind::Pause);
+    let resume = just(Token::KwResume).to(EventKind::Resume);
     let stop = just(Token::KwStop).to(EventKind::Stop);
+    // v2 lifecycle: resting is an alias for stop
+    let resting = just(Token::KwResting).to(EventKind::Resting);
 
     let message = just(Token::KwMessage)
         .ignore_then(just(Token::LParen))
@@ -584,7 +615,14 @@ fn event_kind_parser(source: Arc<str>) -> impl Parser<Token, EventKind, Error = 
         .then_ignore(just(Token::RParen))
         .map(|param_name| EventKind::Error { param_name });
 
-    start.or(stop).or(message).or(error)
+    waking
+        .or(start)
+        .or(pause)
+        .or(resume)
+        .or(stop)
+        .or(resting)
+        .or(message)
+        .or(error)
 }
 
 // =============================================================================
@@ -1281,7 +1319,29 @@ fn expr_parser(source: Arc<str>) -> BoxedParser<'static, Token, Expr, ParseError
             .or_not()
             .map(|args| args.unwrap_or_default());
 
-        let variant_construct = ident_token_parser(src.clone())
+        // Parser for enum name: accepts identifiers OR builtin type keywords (Option, Result)
+        // This allows Option::Some(...) and Result::Ok(...) syntax
+        let enum_name_parser = {
+            let src = src.clone();
+            ident_token_parser(src.clone()).or(just(Token::TyOption)
+                .or(just(Token::TyResult))
+                .map_with_span({
+                    let src = src.clone();
+                    move |token, span: Range<usize>| {
+                        let name = match token {
+                            Token::TyOption => "Option",
+                            Token::TyResult => "Result",
+                            _ => unreachable!(),
+                        };
+                        Ident {
+                            name: name.to_string(),
+                            span: make_span(&src, span),
+                        }
+                    }
+                }))
+        };
+
+        let variant_construct = enum_name_parser
             .then(variant_turbofish)
             .then_ignore(just(Token::ColonColon))
             .then(ident_token_parser(src.clone()))
@@ -1926,7 +1986,27 @@ fn pattern_parser(source: Arc<str>) -> impl Parser<Token, Pattern, Error = Parse
 
         // Enum variant with optional payload: `Ok(x)` or `Status::Active`
         // Qualified with payload: EnumName::Variant(pattern)
-        let qualified_variant_with_payload = ident_token_parser(src4.clone())
+        // Parser for enum name: accepts identifiers OR builtin type keywords (Option, Result)
+        let pattern_enum_name_parser = {
+            let src = src4.clone();
+            ident_token_parser(src.clone()).or(just(Token::TyOption)
+                .or(just(Token::TyResult))
+                .map_with_span({
+                    let src = src.clone();
+                    move |token, span: Range<usize>| {
+                        let name = match token {
+                            Token::TyOption => "Option",
+                            Token::TyResult => "Result",
+                            _ => unreachable!(),
+                        };
+                        Ident {
+                            name: name.to_string(),
+                            span: make_span(&src, span),
+                        }
+                    }
+                }))
+        };
+        let qualified_variant_with_payload = pattern_enum_name_parser
             .then_ignore(just(Token::ColonColon))
             .then(ident_token_parser(src4.clone()))
             .then(
@@ -2659,6 +2739,76 @@ mod tests {
             EventKind::Message { .. }
         ));
         assert_eq!(prog.agents[0].handlers[2].event, EventKind::Stop);
+    }
+
+    #[test]
+    fn parse_v2_lifecycle_hooks() {
+        let source = r#"
+            agent StatefulWorker {
+                on waking {
+                    // Load persisted state
+                    trace("waking up");
+                }
+
+                on start {
+                    trace("started");
+                }
+
+                on pause {
+                    // Save state before pause
+                    trace("pausing");
+                }
+
+                on resume {
+                    trace("resuming");
+                }
+
+                on resting {
+                    // Cleanup before shutdown
+                    trace("resting");
+                }
+            }
+            run StatefulWorker;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        assert_eq!(prog.agents[0].handlers.len(), 5);
+        assert_eq!(prog.agents[0].handlers[0].event, EventKind::Waking);
+        assert_eq!(prog.agents[0].handlers[1].event, EventKind::Start);
+        assert_eq!(prog.agents[0].handlers[2].event, EventKind::Pause);
+        assert_eq!(prog.agents[0].handlers[3].event, EventKind::Resume);
+        assert_eq!(prog.agents[0].handlers[4].event, EventKind::Resting);
+    }
+
+    #[test]
+    fn parse_persistent_beliefs() {
+        let source = r#"
+            agent DatabaseSteward {
+                @persistent schema_version: Int
+                @persistent migration_log: List<String>
+                active_connections: Int
+
+                on start {
+                    yield(0);
+                }
+            }
+            run DatabaseSteward;
+        "#;
+
+        let (prog, errors) = parse_str(source);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        let prog = prog.expect("should parse");
+
+        assert_eq!(prog.agents[0].beliefs.len(), 3);
+        assert!(prog.agents[0].beliefs[0].is_persistent);
+        assert_eq!(prog.agents[0].beliefs[0].name.name, "schema_version");
+        assert!(prog.agents[0].beliefs[1].is_persistent);
+        assert_eq!(prog.agents[0].beliefs[1].name.name, "migration_log");
+        assert!(!prog.agents[0].beliefs[2].is_persistent);
+        assert_eq!(prog.agents[0].beliefs[2].name.name, "active_connections");
     }
 
     #[test]

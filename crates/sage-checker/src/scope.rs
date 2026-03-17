@@ -210,11 +210,158 @@ impl Scope {
             },
         );
 
+        // Http.put(url: String, body: String) -> Result<HttpResponse, String>
+        http_functions.insert(
+            "put".to_string(),
+            ToolFnInfo {
+                params: vec![
+                    ("url".to_string(), Type::String),
+                    ("body".to_string(), Type::String),
+                ],
+                return_ty: Type::Result(
+                    Box::new(Type::Named("HttpResponse".to_string())),
+                    Box::new(Type::String),
+                ),
+            },
+        );
+
+        // Http.delete(url: String) -> Result<HttpResponse, String>
+        http_functions.insert(
+            "delete".to_string(),
+            ToolFnInfo {
+                params: vec![("url".to_string(), Type::String)],
+                return_ty: Type::Result(
+                    Box::new(Type::Named("HttpResponse".to_string())),
+                    Box::new(Type::String),
+                ),
+            },
+        );
+
         scope.tools.insert(
             "Http".to_string(),
             ToolInfo {
                 name: "Http".to_string(),
                 functions: http_functions,
+                is_pub: true,
+            },
+        );
+
+        // Register Fs built-in tool (FileSystem)
+        let mut fs_functions = HashMap::new();
+
+        // Fs.read(path: String) -> Result<String, String>
+        fs_functions.insert(
+            "read".to_string(),
+            ToolFnInfo {
+                params: vec![("path".to_string(), Type::String)],
+                return_ty: Type::Result(Box::new(Type::String), Box::new(Type::String)),
+            },
+        );
+
+        // Fs.write(path: String, content: String) -> Result<Unit, String>
+        fs_functions.insert(
+            "write".to_string(),
+            ToolFnInfo {
+                params: vec![
+                    ("path".to_string(), Type::String),
+                    ("content".to_string(), Type::String),
+                ],
+                return_ty: Type::Result(Box::new(Type::Unit), Box::new(Type::String)),
+            },
+        );
+
+        // Fs.exists(path: String) -> Result<Bool, String>
+        fs_functions.insert(
+            "exists".to_string(),
+            ToolFnInfo {
+                params: vec![("path".to_string(), Type::String)],
+                return_ty: Type::Result(Box::new(Type::Bool), Box::new(Type::String)),
+            },
+        );
+
+        // Fs.list(path: String) -> Result<List<String>, String>
+        fs_functions.insert(
+            "list".to_string(),
+            ToolFnInfo {
+                params: vec![("path".to_string(), Type::String)],
+                return_ty: Type::Result(
+                    Box::new(Type::List(Box::new(Type::String))),
+                    Box::new(Type::String),
+                ),
+            },
+        );
+
+        // Fs.delete(path: String) -> Result<Unit, String>
+        fs_functions.insert(
+            "delete".to_string(),
+            ToolFnInfo {
+                params: vec![("path".to_string(), Type::String)],
+                return_ty: Type::Result(Box::new(Type::Unit), Box::new(Type::String)),
+            },
+        );
+
+        scope.tools.insert(
+            "Fs".to_string(),
+            ToolInfo {
+                name: "Fs".to_string(),
+                functions: fs_functions,
+                is_pub: true,
+            },
+        );
+
+        // Register Shell built-in tool
+        let mut shell_functions = HashMap::new();
+
+        // Shell.run(command: String) -> Result<ShellResult, String>
+        shell_functions.insert(
+            "run".to_string(),
+            ToolFnInfo {
+                params: vec![("command".to_string(), Type::String)],
+                return_ty: Type::Result(
+                    Box::new(Type::Named("ShellResult".to_string())),
+                    Box::new(Type::String),
+                ),
+            },
+        );
+
+        scope.tools.insert(
+            "Shell".to_string(),
+            ToolInfo {
+                name: "Shell".to_string(),
+                functions: shell_functions,
+                is_pub: true,
+            },
+        );
+
+        // Register Database built-in tool
+        let mut database_functions = HashMap::new();
+
+        // Database.query(sql: String) -> Result<List<DbRow>, String>
+        database_functions.insert(
+            "query".to_string(),
+            ToolFnInfo {
+                params: vec![("sql".to_string(), Type::String)],
+                return_ty: Type::Result(
+                    Box::new(Type::List(Box::new(Type::Named("DbRow".to_string())))),
+                    Box::new(Type::String),
+                ),
+            },
+        );
+
+        // Database.execute(sql: String) -> Result<Int, String>
+        database_functions.insert(
+            "execute".to_string(),
+            ToolFnInfo {
+                params: vec![("sql".to_string(), Type::String)],
+                return_ty: Type::Result(Box::new(Type::Int), Box::new(Type::String)),
+            },
+        );
+
+        scope.tools.insert(
+            "Database".to_string(),
+            ToolInfo {
+                name: "Database".to_string(),
+                functions: database_functions,
                 is_pub: true,
             },
         );
@@ -269,7 +416,41 @@ impl SymbolTable {
     pub fn new() -> Self {
         let mut table = Self::default();
         table.register_builtins();
+        table.register_builtin_enums();
         table
+    }
+
+    /// Register built-in enum types (Option, Result).
+    fn register_builtin_enums(&mut self) {
+        // Option<T> = Some(T) | None
+        self.enums.insert(
+            "Option".to_string(),
+            EnumInfo {
+                name: "Option".to_string(),
+                type_params: vec!["T".to_string()],
+                variants: vec![
+                    ("Some".to_string(), Some(Type::TypeParam("T".to_string()))),
+                    ("None".to_string(), None),
+                ],
+                is_pub: true,
+                module_path: vec![],
+            },
+        );
+
+        // Result<T, E> = Ok(T) | Err(E)
+        self.enums.insert(
+            "Result".to_string(),
+            EnumInfo {
+                name: "Result".to_string(),
+                type_params: vec!["T".to_string(), "E".to_string()],
+                variants: vec![
+                    ("Ok".to_string(), Some(Type::TypeParam("T".to_string()))),
+                    ("Err".to_string(), Some(Type::TypeParam("E".to_string()))),
+                ],
+                is_pub: true,
+                module_path: vec![],
+            },
+        );
     }
 
     /// Register the built-in functions.
