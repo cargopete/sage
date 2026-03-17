@@ -1375,4 +1375,244 @@ run Main;
             .collect();
         assert!(warnings.is_empty(), "unexpected W006 warning: {:?}", warnings);
     }
+
+    // =========================================================================
+    // RFC-0015: Generics tests
+    // =========================================================================
+
+    #[test]
+    fn check_generic_function_identity() {
+        let source = r#"
+            fn identity<T>(x: T) -> T {
+                return x;
+            }
+
+            agent Main {
+                on start {
+                    let n = identity::<Int>(42);
+                    let s = identity::<String>("hello");
+                    yield(n);
+                }
+            }
+            run Main;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+    }
+
+    #[test]
+    fn check_generic_record_pair() {
+        let source = r#"
+            record Pair<A, B> {
+                first: A,
+                second: B,
+            }
+
+            agent Main {
+                on start {
+                    let p = Pair::<Int, String> { first: 42, second: "hello" };
+                    let n = p.first;
+                    let s = p.second;
+                    yield(n);
+                }
+            }
+            run Main;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+    }
+
+    #[test]
+    fn check_turbofish_type_substitution() {
+        let source = r#"
+            fn make_pair<A, B>(a: A, b: B) -> (A, B) {
+                return (a, b);
+            }
+
+            agent Main {
+                on start {
+                    let pair = make_pair::<Int, String>(42, "hello");
+                    let (n, s) = pair;
+                    yield(n);
+                }
+            }
+            run Main;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+    }
+
+    #[test]
+    fn check_generic_inference_from_args() {
+        let source = r#"
+            fn identity<T>(x: T) -> T {
+                return x;
+            }
+
+            agent Main {
+                on start {
+                    let n = identity(42);
+                    let s = identity("hello");
+                    yield(n);
+                }
+            }
+            run Main;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+    }
+
+    #[test]
+    fn check_generic_wrong_type_args_count() {
+        let source = r#"
+            fn identity<T>(x: T) -> T {
+                return x;
+            }
+
+            agent Main {
+                on start {
+                    let n = identity::<Int, String>(42);
+                    yield(n);
+                }
+            }
+            run Main;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(!result.errors.is_empty());
+        assert!(matches!(result.errors[0], CheckError::GenericError { .. }));
+    }
+
+    #[test]
+    fn check_generic_type_mismatch() {
+        let source = r#"
+            fn identity<T>(x: T) -> T {
+                return x;
+            }
+
+            agent Main {
+                on start {
+                    let n: String = identity::<Int>(42);
+                    yield(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(!result.errors.is_empty());
+        assert!(matches!(result.errors[0], CheckError::TypeMismatch { .. }));
+    }
+
+    #[test]
+    fn check_generic_record_field_type_mismatch() {
+        let source = r#"
+            record Box<T> {
+                value: T,
+            }
+
+            agent Main {
+                on start {
+                    let b = Box::<Int> { value: "not an int" };
+                    yield(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(!result.errors.is_empty());
+        assert!(matches!(result.errors[0], CheckError::TypeMismatch { .. }));
+    }
+
+    #[test]
+    fn check_non_generic_function_with_type_args() {
+        let source = r#"
+            fn add(a: Int, b: Int) -> Int {
+                return a + b;
+            }
+
+            agent Main {
+                on start {
+                    let n = add::<Int>(1, 2);
+                    yield(n);
+                }
+            }
+            run Main;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(!result.errors.is_empty());
+        assert!(matches!(result.errors[0], CheckError::GenericError { .. }));
+    }
+
+    #[test]
+    fn check_generic_enum_variant() {
+        let source = r#"
+            enum Either<L, R> {
+                Left(L),
+                Right(R),
+            }
+
+            agent Main {
+                on start {
+                    let e = Either::<String, Int>::Left("hello");
+                    yield(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+    }
+
+    #[test]
+    fn check_generic_list_param() {
+        let source = r#"
+            fn len_of<T>(list: List<T>) -> Int {
+                return len(list);
+            }
+
+            agent Main {
+                on start {
+                    let x = len_of::<Int>([1, 2, 3]);
+                    yield(x);
+                }
+            }
+            run Main;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+    }
+
+    #[test]
+    fn check_generic_nested_types() {
+        let source = r#"
+            record Box<T> {
+                value: T,
+            }
+
+            fn wrap<T>(x: T) -> Box<T> {
+                return Box { value: x };
+            }
+
+            agent Main {
+                on start {
+                    let b = wrap::<Int>(42);
+                    let n = b.value;
+                    yield(n);
+                }
+            }
+            run Main;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+    }
 }

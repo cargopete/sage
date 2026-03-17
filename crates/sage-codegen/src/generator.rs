@@ -1863,6 +1863,14 @@ serde_json = "1"
                     self.emit.write("return ctx.emit(");
                     self.generate_expr(value);
                     self.emit.writeln(");");
+                } else if let Expr::Call { name, args, .. } = expr {
+                    // Handle assertion builtins (needed for assertions inside span blocks)
+                    if self.is_assertion_builtin(&name.name) {
+                        self.generate_assertion(&name.name, args);
+                    } else {
+                        self.generate_expr(expr);
+                        self.emit.writeln(";");
+                    }
                 } else {
                     self.generate_expr(expr);
                     self.emit.writeln(";");
@@ -2792,8 +2800,24 @@ serde_json = "1"
                 self.emit.write("}");
             }
 
-            Expr::RecordConstruct { name, fields, .. } => {
+            Expr::RecordConstruct {
+                name,
+                type_args,
+                fields,
+                ..
+            } => {
                 self.emit.write(&name.name);
+                // RFC-0015: Emit type arguments if provided (turbofish syntax)
+                if !type_args.is_empty() {
+                    self.emit.write("::<");
+                    for (i, arg) in type_args.iter().enumerate() {
+                        if i > 0 {
+                            self.emit.write(", ");
+                        }
+                        self.emit_type(arg);
+                    }
+                    self.emit.write(">");
+                }
                 self.emit.write(" { ");
                 for (i, field) in fields.iter().enumerate() {
                     if i > 0 {
@@ -2860,10 +2884,9 @@ serde_json = "1"
 
             // fail expression - explicit error raising
             Expr::Fail { error, .. } => {
-                // Generate: return Err(SageError::agent(msg))
-                // TODO: Use SageError::user once runtime 0.6.1 is published
+                // Generate: return Err(SageError::user(msg))
                 self.emit
-                    .write("return Err(sage_runtime::SageError::agent(");
+                    .write("return Err(sage_runtime::SageError::user(");
                 self.generate_expr(error);
                 self.emit.write("))");
             }

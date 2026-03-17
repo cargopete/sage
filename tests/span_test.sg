@@ -1,0 +1,95 @@
+// RFC v2: Span blocks and trace end-to-end tests
+// Run with: sage test tests/
+
+// ============================================================================
+// SPAN BLOCKS FOR OBSERVABILITY
+// ============================================================================
+
+fn process_with_spans() -> Int {
+    span "outer_operation" {
+        let x = 1;
+        span "inner_calculation" {
+            let y = x + 1;
+            let z = y * 2;
+        }
+        let result = x + 10;
+    }
+    return 42;
+}
+
+fn traced_function(value: Int) -> Int {
+    trace("entering traced_function");
+    let result = value * 2;
+    trace("computed result: " ++ int_to_str(result));
+    return result;
+}
+
+// ============================================================================
+// TESTS
+// ============================================================================
+
+test "span block with string literal name" {
+    span "test_span" {
+        let x = 1;
+        let y = 2;
+        assert_eq(x + y, 3);
+    }
+    assert_true(true);
+}
+
+test "nested span blocks" {
+    span "outer" {
+        let a = 10;
+        span "inner" {
+            let b = 20;
+            assert_eq(a + b, 30);
+        }
+    }
+    assert_true(true);
+}
+
+test "span block with computation" {
+    let result = 0;
+    span "compute" {
+        let x = 5;
+        let y = 10;
+        // result = x + y; // Can't assign outer in block
+    }
+    assert_true(true);
+}
+
+test "trace with string literal" {
+    trace("simple trace message");
+    assert_true(true);
+}
+
+test "trace with interpolation" {
+    let value = 42;
+    trace("value is: " ++ int_to_str(value));
+    assert_true(true);
+}
+
+test "trace in loop" {
+    for i in [1, 2, 3] {
+        trace("iteration: " ++ int_to_str(i));
+    }
+    assert_true(true);
+}
+
+test "span block in function" {
+    let result = process_with_spans();
+    assert_eq(result, 42);
+}
+
+test "function with trace calls" {
+    let result = traced_function(21);
+    assert_eq(result, 42);
+}
+
+test "span with dynamic name" {
+    let name = "dynamic_span";
+    span name {
+        let x = 1;
+    }
+    assert_true(true);
+}

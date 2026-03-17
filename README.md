@@ -63,11 +63,11 @@ run Coordinator;
 
 ## Status
 
-**v1.0.4 released** — Keyword renames: `divine`, `summon`, `yield`, `Oracle`.
+**v1.0.5 in development** — Supervision trees, persistence, lifecycle hooks, observability.
 
 | | |
 |---|---|
-| **Latest** | [v1.0.4](https://github.com/sagelang/sage/releases/tag/v1.0.4) |
+| **Latest** | [v1.0.5](https://github.com/sagelang/sage/releases/tag/v1.0.5) |
 | **Extension** | `.sg` |
 | **Platforms** | macOS (ARM), Linux (x86_64, ARM) |
 | **Build time** | ~0.5s |
@@ -573,6 +573,128 @@ let (x, y) = pair;
 | `map_values(map)` | Get all values as list |
 | `Http.get(url)` | HTTP GET request (requires `use Http`) |
 | `Http.post(url, body)` | HTTP POST request (requires `use Http`) |
+| `trace(msg)` | Emit trace event for observability |
+
+### Supervision Trees
+
+Supervisors manage agent lifecycles with OTP-style restart strategies:
+
+```sage
+agent Worker {
+    id: Int
+
+    on start {
+        trace("Worker " ++ int_to_str(self.id) ++ " running");
+        yield(self.id);
+    }
+
+    on error(e) {
+        yield(-1);
+    }
+}
+
+// OneForOne: Only restart the failed child
+supervisor WorkerPool {
+    strategy: OneForOne
+    children {
+        Worker { restart: Permanent, id: 1 }
+        Worker { restart: Transient, id: 2 }
+        Worker { restart: Temporary, id: 3 }
+    }
+}
+
+run WorkerPool;
+```
+
+**Strategies:**
+- `OneForOne` — Only restart the failed child
+- `OneForAll` — Restart all children if one fails
+- `RestForOne` — Restart failed child and all children started after it
+
+**Restart policies:**
+- `Permanent` — Always restart
+- `Transient` — Restart only on abnormal exit
+- `Temporary` — Never restart
+
+### Persistence
+
+Agent fields marked `@persistent` are automatically checkpointed and restored across restarts:
+
+```sage
+agent Counter {
+    @persistent count: Int
+    @persistent history: List<Int>
+
+    on waking {
+        // Called after persistent state is loaded
+        trace("Restored count: " ++ int_to_str(self.count));
+    }
+
+    on start {
+        yield(self.count);
+    }
+
+    on resting {
+        // Called before shutdown
+        trace("Saving state");
+    }
+
+    on error(e) {
+        yield(-1);
+    }
+}
+```
+
+Configure persistence in `grove.toml`:
+
+```toml
+[persistence]
+backend = "sqlite"  # or "postgres", "file"
+path = ".sage/checkpoints.db"
+```
+
+### Lifecycle Hooks
+
+Agents support additional lifecycle hooks for persistence and supervision:
+
+| Handler | When it runs |
+|---------|--------------|
+| `on waking` | After persistent state is loaded, before `on start` |
+| `on start` | When the agent is spawned |
+| `on pause` | When supervisor signals graceful pause |
+| `on resume` | When agent is unpaused |
+| `on stop` / `on resting` | During graceful shutdown |
+| `on error(e)` | When an unhandled error occurs |
+
+### Observability
+
+Use `trace()` and `span` blocks for debugging and monitoring:
+
+```sage
+fn process_data(input: String) -> String {
+    span "process_data" {
+        trace("Processing: " ++ input);
+
+        span "validate" {
+            trace("Validating input");
+        }
+
+        span "transform" {
+            trace("Transforming");
+        }
+    }
+    return "done";
+}
+```
+
+Enable trace output with environment variables:
+
+```bash
+SAGE_TRACE=1 sage run myprogram.sg           # Output to stderr
+SAGE_TRACE_FILE=trace.log sage run myprogram.sg  # Output to file
+```
+
+Trace events are emitted as newline-delimited JSON (NDJSON).
 
 ### Semicolons
 

@@ -1,0 +1,46 @@
+// Observability Example
+// Demonstrates span blocks and trace() for debugging and monitoring.
+
+fn fetch_user(id: Int) -> String {
+    span "fetch_user" {
+        trace("Fetching user " ++ int_to_str(id));
+        // Simulated database lookup
+        sleep_ms(10);
+    }
+    return "User" ++ int_to_str(id);
+}
+
+fn process_data(data: String) -> String {
+    span "process_data" {
+        trace("Processing: " ++ data);
+
+        span "validate" {
+            trace("Validating input");
+        }
+
+        span "transform" {
+            trace("Transforming data");
+        }
+    }
+    return "Processed: " ++ data;
+}
+
+agent DataPipeline {
+    on start {
+        span "pipeline" {
+            let user = fetch_user(42);
+            let result = process_data(user);
+            trace("Pipeline complete: " ++ result);
+        }
+        yield(0);
+    }
+
+    on error(e) {
+        trace("Pipeline failed");
+        yield(1);
+    }
+}
+
+// Run with SAGE_TRACE=1 to see trace output:
+// SAGE_TRACE=1 sage run examples/observability.sg
+run DataPipeline;

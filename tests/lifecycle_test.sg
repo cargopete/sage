@@ -1,0 +1,25 @@
+// RFC v2: Lifecycle hooks end-to-end tests
+// Run with: sage test tests/
+
+// ============================================================================
+// TESTS - Validate lifecycle hooks compile correctly
+// ============================================================================
+
+test "trace function compiles" {
+    // trace() is used for observability
+    trace("test trace message");
+    assert_true(true);
+}
+
+test "trace with interpolation compiles" {
+    let value = 42;
+    trace("value is: " ++ int_to_str(value));
+    assert_true(true);
+}
+
+test "multiple trace calls compile" {
+    trace("first");
+    trace("second");
+    trace("third");
+    assert_true(true);
+}

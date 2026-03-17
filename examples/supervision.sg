@@ -1,0 +1,37 @@
+// Supervision Trees Example
+// Demonstrates OTP-style supervision for fault-tolerant agent systems.
+
+// Worker agent that might fail
+agent Worker {
+    id: Int
+    fail_on: Int
+
+    on start {
+        trace("Worker " ++ int_to_str(self.id) ++ " starting");
+
+        if self.id == self.fail_on {
+            // Simulate failure
+            let x = try divine("This will fail");
+        }
+
+        yield(self.id);
+    }
+
+    on error(e) {
+        trace("Worker " ++ int_to_str(self.id) ++ " failed");
+        yield(-1);
+    }
+}
+
+// Supervisor with OneForOne strategy:
+// Only restart the specific child that failed
+supervisor WorkerPool {
+    strategy: OneForOne
+    children {
+        Worker { restart: Permanent, id: 1, fail_on: 0 }
+        Worker { restart: Permanent, id: 2, fail_on: 0 }
+        Worker { restart: Transient, id: 3, fail_on: 0 }
+    }
+}
+
+run WorkerPool;

@@ -1,0 +1,47 @@
+// Persistence Example
+// Demonstrates @persistent fields that survive restarts.
+
+// Counter agent with persistent state
+agent Counter {
+    @persistent count: Int
+    @persistent last_run: String
+
+    on waking {
+        // Called after persistent state is loaded, before on start
+        trace("Waking - previous count: " ++ int_to_str(self.count));
+        trace("Waking - last run: " ++ self.last_run);
+    }
+
+    on start {
+        // Use the restored persistent values
+        let new_count = self.count + 1;
+        trace("New count: " ++ int_to_str(new_count));
+        yield(new_count);
+    }
+
+    on resting {
+        // Called before shutdown - persistent fields will be checkpointed
+        trace("Resting - state will be saved");
+    }
+
+    on error(e) {
+        yield(-1);
+    }
+}
+
+// Supervisor to manage the counter
+supervisor CounterSupervisor {
+    strategy: OneForOne
+    children {
+        Counter { restart: Permanent, count: 0, last_run: "never" }
+    }
+}
+
+// Run multiple times to see persistence in action.
+// Configure backend in grove.toml:
+//
+// [persistence]
+// backend = "sqlite"    # or "postgres", "file"
+// path = ".sage/state.db"
+
+run CounterSupervisor;

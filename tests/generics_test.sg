@@ -1,0 +1,157 @@
+// RFC-0015: Generics end-to-end tests
+// Run with: sage test tests/
+
+// ============================================================================
+// GENERIC FUNCTIONS
+// ============================================================================
+
+fn identity<T>(x: T) -> T {
+    return x;
+}
+
+fn make_pair<A, B>(a: A, b: B) -> (A, B) {
+    return (a, b);
+}
+
+fn swap<A, B>(pair: (A, B)) -> (B, A) {
+    let (a, b) = pair;
+    return (b, a);
+}
+
+// ============================================================================
+// GENERIC RECORDS
+// ============================================================================
+
+// Note: Using "Container" instead of "Box" to avoid conflict with Rust's std::boxed::Box
+record Container<T> {
+    value: T,
+}
+
+record Pair<A, B> {
+    first: A,
+    second: B,
+}
+
+// ============================================================================
+// GENERIC ENUMS
+// ============================================================================
+
+enum Either<L, R> {
+    Left(L),
+    Right(R),
+}
+
+// ============================================================================
+// TESTS: GENERIC FUNCTIONS
+// ============================================================================
+
+test "identity with Int" {
+    let n = identity::<Int>(42);
+    assert_eq(n, 42);
+}
+
+test "identity with String" {
+    let s = identity::<String>("hello");
+    assert_eq(s, "hello");
+}
+
+test "identity with Bool" {
+    let b = identity::<Bool>(true);
+    assert_eq(b, true);
+}
+
+test "identity inference from argument" {
+    let n = identity(42);
+    assert_eq(n, 42);
+}
+
+test "make_pair creates tuple" {
+    let pair = make_pair::<Int, String>(42, "hello");
+    let (n, s) = pair;
+    assert_eq(n, 42);
+    assert_eq(s, "hello");
+}
+
+test "swap reverses tuple" {
+    let pair = make_pair::<Int, String>(42, "hello");
+    let swapped = swap::<Int, String>(pair);
+    let (s, n) = swapped;
+    assert_eq(s, "hello");
+    assert_eq(n, 42);
+}
+
+// ============================================================================
+// TESTS: GENERIC RECORDS
+// ============================================================================
+
+test "Container with Int" {
+    let c = Container::<Int> { value: 42 };
+    assert_eq(c.value, 42);
+}
+
+test "Container with String" {
+    let c = Container::<String> { value: "hello" };
+    assert_eq(c.value, "hello");
+}
+
+test "Container with List" {
+    let c = Container::<List<Int>> { value: [1, 2, 3] };
+    assert_eq(len(c.value), 3);
+}
+
+test "Pair with different types" {
+    let p = Pair::<Int, String> { first: 42, second: "hello" };
+    assert_eq(p.first, 42);
+    assert_eq(p.second, "hello");
+}
+
+test "nested generic records" {
+    let inner = Container::<Int> { value: 42 };
+    let outer = Container::<Container<Int>> { value: inner };
+    assert_eq(outer.value.value, 42);
+}
+
+// ============================================================================
+// TESTS: GENERIC ENUMS
+// ============================================================================
+
+test "Either Left variant" {
+    let e = Either::<String, Int>::Left("hello");
+    let result = match e {
+        Either::Left(s) => s,
+        Either::Right(n) => int_to_str(n),
+    };
+    assert_eq(result, "hello");
+}
+
+test "Either Right variant" {
+    let e = Either::<String, Int>::Right(42);
+    let result = match e {
+        Either::Left(s) => 0,
+        Either::Right(n) => n,
+    };
+    assert_eq(result, 42);
+}
+
+// ============================================================================
+// TESTS: COMBINING GENERICS
+// ============================================================================
+
+fn wrap<T>(x: T) -> Container<T> {
+    return Container { value: x };
+}
+
+fn unwrap_container<T>(c: Container<T>) -> T {
+    return c.value;
+}
+
+test "wrap and unwrap" {
+    let wrapped = wrap::<Int>(42);
+    let unwrapped = unwrap_container::<Int>(wrapped);
+    assert_eq(unwrapped, 42);
+}
+
+test "generic function returning generic record" {
+    let c = wrap::<String>("hello");
+    assert_eq(c.value, "hello");
+}

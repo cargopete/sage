@@ -1356,9 +1356,10 @@ impl Checker {
             } => {
                 let obj_ty = self.check_expr(object);
 
-                // Get the record name from the type
-                let record_name = match &obj_ty {
-                    Type::Named(name) => name.clone(),
+                // Get the record name and type arguments from the type
+                let (record_name, type_args) = match &obj_ty {
+                    Type::Named(name) => (name.clone(), vec![]),
+                    Type::Generic(name, args) => (name.clone(), args.clone()),
                     Type::Error => return Type::Error,
                     _ => {
                         self.errors.push(CheckError::field_access_on_non_record(
@@ -1372,7 +1373,14 @@ impl Checker {
                 // Look up the record and get field type
                 if let Some(record_info) = self.symbols.get_record(&record_name) {
                     if let Some(field_ty) = record_info.fields.get(&field.name) {
-                        field_ty.clone()
+                        // Build type bindings for substitution
+                        let bindings: HashMap<String, Type> = record_info
+                            .type_params
+                            .iter()
+                            .zip(type_args.iter())
+                            .map(|(param, arg)| (param.clone(), arg.clone()))
+                            .collect();
+                        field_ty.substitute(&bindings)
                     } else {
                         self.errors
                             .push(CheckError::unknown_field(&field.name, span));
@@ -5200,9 +5208,10 @@ impl<'a> ModuleChecker<'a> {
             } => {
                 let obj_ty = self.check_expr(object);
 
-                // Get the record name from the type
-                let record_name = match &obj_ty {
-                    Type::Named(name) => name.clone(),
+                // Get the record name and type arguments from the type
+                let (record_name, type_args) = match &obj_ty {
+                    Type::Named(name) => (name.clone(), vec![]),
+                    Type::Generic(name, args) => (name.clone(), args.clone()),
                     Type::Error => return Type::Error,
                     _ => {
                         self.errors.push(CheckError::field_access_on_non_record(
@@ -5216,7 +5225,14 @@ impl<'a> ModuleChecker<'a> {
                 // Look up the record and get field type
                 if let Some(record_info) = self.lookup_record(&record_name) {
                     if let Some(field_ty) = record_info.fields.get(&field.name) {
-                        field_ty.clone()
+                        // Build type bindings for substitution
+                        let bindings: HashMap<String, Type> = record_info
+                            .type_params
+                            .iter()
+                            .zip(type_args.iter())
+                            .map(|(param, arg)| (param.clone(), arg.clone()))
+                            .collect();
+                        field_ty.substitute(&bindings)
                     } else {
                         self.errors
                             .push(CheckError::unknown_field(&field.name, span));
