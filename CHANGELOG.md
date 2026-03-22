@@ -2,6 +2,20 @@
 
 All notable changes to Sage are documented in this file.
 
+## [2.0.1] - 2026-03-22
+
+### Added
+
+#### Extern Functions (Rust FFI)
+- `extern fn` declarations for calling Rust functions directly from Sage
+- `fails` modifier for extern functions that return `Result<T, String>`
+- `[extern]` section in `grove.toml` for specifying Rust source modules and Cargo dependencies
+- Extern modules compiled and linked automatically with generated code
+
+### Fixed
+- sage-persistence version pinning for crates.io compatibility
+- Internal dependency versions aligned for crates.io publish
+
 ## [2.0.0] - 2026-03-18
 
 ### The Steward Architecture
