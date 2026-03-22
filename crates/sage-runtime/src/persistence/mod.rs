@@ -22,12 +22,12 @@
 ))]
 mod backends;
 
-#[cfg(feature = "persistence-sqlite")]
-pub use backends::SyncSqliteStore;
-#[cfg(feature = "persistence-postgres")]
-pub use backends::SyncPostgresStore;
 #[cfg(feature = "persistence-file")]
 pub use backends::SyncFileStore;
+#[cfg(feature = "persistence-postgres")]
+pub use backends::SyncPostgresStore;
+#[cfg(feature = "persistence-sqlite")]
+pub use backends::SyncSqliteStore;
 
 use serde::{de::DeserializeOwned, Serialize};
 use std::collections::HashMap;
@@ -169,7 +169,8 @@ impl<T: Clone + Serialize + DeserializeOwned + Default + Send> Persisted<T> {
     pub fn set(&self, new_value: T) {
         *self.value.write().unwrap() = new_value.clone();
         if let Ok(json) = serde_json::to_value(&new_value) {
-            self.store.save_sync(&self.agent_key, &self.field_name, json);
+            self.store
+                .save_sync(&self.agent_key, &self.field_name, json);
         }
     }
 
@@ -177,7 +178,8 @@ impl<T: Clone + Serialize + DeserializeOwned + Default + Send> Persisted<T> {
     pub fn checkpoint(&self) {
         let value = self.value.read().unwrap().clone();
         if let Ok(json) = serde_json::to_value(&value) {
-            self.store.save_sync(&self.agent_key, &self.field_name, json);
+            self.store
+                .save_sync(&self.agent_key, &self.field_name, json);
         }
     }
 }

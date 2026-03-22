@@ -2,6 +2,16 @@
 
 All notable changes to Sage are documented in this file.
 
+## [2.0.2] - 2026-03-22
+
+### Fixed
+- Fix codegen ownership errors in spawn closures (`move` keyword on closure captures)
+- Fix summon expressions: pre-clone fields, auto-initialize tool clients
+- Track agent tool uses for correct summon struct generation
+- Fix all clippy warnings (dead code, `map_or` → `is_some_and`, `drop_non_drop`, wildcard patterns, `only_used_in_recursion`, `useless_format`)
+- Fix `cargo fmt` formatting across codebase
+- Box `LoadError` return types to reduce `Result` size
+
 ## [2.0.1] - 2026-03-22
 
 ### Added

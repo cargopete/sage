@@ -125,13 +125,12 @@ impl CheckpointStore for PostgresStore {
     }
 
     async fn exists(&self, agent_key: &str) -> Result<bool> {
-        let row: Option<(i64,)> = sqlx::query_as(
-            "SELECT COUNT(*) FROM sage_checkpoints WHERE agent_key = $1 LIMIT 1",
-        )
-        .bind(agent_key)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| PersistenceError::ReadFailed(format!("exists: {e}")))?;
+        let row: Option<(i64,)> =
+            sqlx::query_as("SELECT COUNT(*) FROM sage_checkpoints WHERE agent_key = $1 LIMIT 1")
+                .bind(agent_key)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| PersistenceError::ReadFailed(format!("exists: {e}")))?;
 
         Ok(row.map(|(c,)| c > 0).unwrap_or(false))
     }

@@ -2148,11 +2148,7 @@ impl SymbolTable {
     /// so they are callable with full type checking.
     pub fn register_extern_fns(&mut self, extern_fns: &[sage_parser::ExternFnDecl]) {
         for ext_fn in extern_fns {
-            let params: Vec<Type> = ext_fn
-                .params
-                .iter()
-                .map(|p| resolve_type(&p.ty))
-                .collect();
+            let params: Vec<Type> = ext_fn.params.iter().map(|p| resolve_type(&p.ty)).collect();
             let return_type = resolve_type(&ext_fn.return_ty);
 
             // BuiltinInfo requires &'static str — leak the heap String so it
@@ -2413,9 +2409,7 @@ pub fn resolve_type_with_params(
         TypeExpr::Bool => Type::Bool,
         TypeExpr::String => Type::String,
         TypeExpr::Unit => Type::Unit,
-        TypeExpr::List(inner) => {
-            Type::List(Box::new(resolve_type_with_params(inner, type_params)))
-        }
+        TypeExpr::List(inner) => Type::List(Box::new(resolve_type_with_params(inner, type_params))),
         TypeExpr::Option(inner) => {
             Type::Option(Box::new(resolve_type_with_params(inner, type_params)))
         }

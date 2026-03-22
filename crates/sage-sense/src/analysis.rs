@@ -11,9 +11,7 @@ use tower_lsp::lsp_types::Diagnostic;
 ///
 /// If `filename` is provided and ends with `_test.sg`, test constructs are allowed.
 pub fn analyse(source: &str, filename: Option<&str>) -> Vec<Diagnostic> {
-    let is_test_file = filename
-        .map(|f| f.ends_with("_test.sg"))
-        .unwrap_or(false);
+    let is_test_file = filename.map(|f| f.ends_with("_test.sg")).unwrap_or(false);
     let mut diagnostics = Vec::new();
 
     // Step 1: Lex (with error recovery)

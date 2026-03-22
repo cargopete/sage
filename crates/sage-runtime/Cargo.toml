@@ -16,7 +16,7 @@ persistence-file = ["sage-persistence/file"]
 
 [dependencies]
 # Optional persistence dependency for sync adapters
-sage-persistence = { path = "../sage-persistence", version = "2.0.1", optional = true }
+sage-persistence = { path = "../sage-persistence", version = "2.0.2", optional = true }
 tokio = { version = "1", features = ["full"] }
 reqwest = { version = "0.12", features = ["json"] }
 serde = { version = "1", features = ["derive"] }

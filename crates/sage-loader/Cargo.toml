@@ -7,8 +7,8 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-sage-parser = { path = "../sage-parser", version = "2.0.1" }
-sage-package = { path = "../sage-package", version = "2.0.1" }
+sage-parser = { path = "../sage-parser", version = "2.0.2" }
+sage-package = { path = "../sage-package", version = "2.0.2" }
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 miette = { version = "7", features = ["fancy"] }

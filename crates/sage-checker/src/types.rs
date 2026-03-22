@@ -161,9 +161,7 @@ impl Type {
             }
             // Generic<T> is compatible with Named if it has no type args (non-generic)
             (Type::Generic(name1, args), Type::Named(name2))
-            | (Type::Named(name2), Type::Generic(name1, args)) => {
-                name1 == name2 && args.is_empty()
-            }
+            | (Type::Named(name2), Type::Generic(name1, args)) => name1 == name2 && args.is_empty(),
             // Function types are compatible if params and return types are pairwise compatible
             (Type::Fn(params1, ret1), Type::Fn(params2, ret2)) => {
                 if params1.len() != params2.len() {
@@ -194,9 +192,7 @@ impl Type {
                 ok1.is_compatible_with(ok2) && err1.is_compatible_with(err2)
             }
             // Persisted types are compatible if inner types are compatible
-            (Type::Persisted(inner1), Type::Persisted(inner2)) => {
-                inner1.is_compatible_with(inner2)
-            }
+            (Type::Persisted(inner1), Type::Persisted(inner2)) => inner1.is_compatible_with(inner2),
             // List types are compatible if element types are compatible
             (Type::List(elem1), Type::List(elem2)) => elem1.is_compatible_with(elem2),
             // Option types are compatible if inner types are compatible
@@ -298,9 +294,9 @@ impl Type {
             Type::Named(_) => true,
 
             // Non-serializable types
-            Type::Fn(_, _) => false,    // Functions can't be serialized
-            Type::Agent(_) => false,    // Agent handles are runtime-only
-            Type::Oracle(_) => false,   // Oracle results are transient
+            Type::Fn(_, _) => false,     // Functions can't be serialized
+            Type::Agent(_) => false,     // Agent handles are runtime-only
+            Type::Oracle(_) => false,    // Oracle results are transient
             Type::TypeParam(_) => false, // Unresolved type params can't be verified
 
             // Error and Never are edge cases - treat as non-serializable

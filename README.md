@@ -63,11 +63,11 @@ run Coordinator;
 
 ## Status
 
-**v2.0.1** — Extern functions (Rust FFI), plus The Steward Architecture. Supervision trees, persistent beliefs, session types, effect handlers, and observability.
+**v2.0.2** — CI fixes, codegen ownership fixes, clippy clean. Plus extern functions (Rust FFI) and The Steward Architecture.
 
 | | |
 |---|---|
-| **Latest** | [v2.0.1](https://github.com/sagelang/sage/releases/tag/v2.0.1) |
+| **Latest** | [v2.0.2](https://github.com/sagelang/sage/releases/tag/v2.0.2) |
 | **Extension** | `.sg` |
 | **Platforms** | macOS (ARM), Linux (x86_64, ARM) |
 | **Build time** | ~0.5s |

@@ -143,7 +143,7 @@ impl ChildHandle {
     /// Spawn (or respawn) this child.
     fn spawn(&mut self) {
         let future = (self.spawn_fn)();
-        self.handle = Some(tokio::spawn(async move { future.await }));
+        self.handle = Some(tokio::spawn(future));
     }
 
     /// Check if the child is running.
@@ -180,13 +180,18 @@ impl Supervisor {
     /// Add a child to the supervisor.
     ///
     /// The spawn function should create the agent and return its future.
-    pub fn add_child<F, Fut>(&mut self, name: impl Into<String>, restart_policy: RestartPolicy, spawn_fn: F)
-    where
+    pub fn add_child<F, Fut>(
+        &mut self,
+        name: impl Into<String>,
+        restart_policy: RestartPolicy,
+        spawn_fn: F,
+    ) where
         F: Fn() -> Fut + Send + 'static,
         Fut: Future<Output = SageResult<()>> + Send + 'static,
     {
         let spawn_fn: SpawnFn = Box::new(move || Box::pin(spawn_fn()));
-        self.children.push(ChildHandle::new(name.into(), restart_policy, spawn_fn));
+        self.children
+            .push(ChildHandle::new(name.into(), restart_policy, spawn_fn));
     }
 
     /// Start all children and begin supervision.
@@ -518,10 +523,18 @@ mod tests {
         assert!(result.is_ok(), "supervisor failed: {:?}", result);
 
         // Child1 should only run once (it's before the failing child)
-        assert_eq!(counter1.load(Ordering::SeqCst), 1, "Child1 should run only once");
+        assert_eq!(
+            counter1.load(Ordering::SeqCst),
+            1,
+            "Child1 should run only once"
+        );
 
         // Child2 runs 3 times (2 failures + 1 success)
-        assert_eq!(counter2.load(Ordering::SeqCst), 3, "Child2 should run 3 times");
+        assert_eq!(
+            counter2.load(Ordering::SeqCst),
+            3,
+            "Child2 should run 3 times"
+        );
 
         // Child3 should be restarted when Child2 fails (2 restarts + initial)
         assert!(
@@ -569,7 +582,11 @@ mod tests {
         assert!(result.is_ok(), "supervisor failed: {:?}", result);
 
         // Child2 runs 3 times (2 failures + 1 success)
-        assert_eq!(counter2.load(Ordering::SeqCst), 3, "Child2 should run 3 times");
+        assert_eq!(
+            counter2.load(Ordering::SeqCst),
+            3,
+            "Child2 should run 3 times"
+        );
 
         // Child1 should be restarted when Child2 fails (OneForAll restarts all)
         assert!(

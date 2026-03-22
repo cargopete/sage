@@ -3,10 +3,9 @@
 use crate::emit::Emitter;
 use sage_loader::{ModuleTree, SupervisionConfig};
 use sage_parser::{
-    AgentDecl, BinOp, Block, ConstDecl, EffectHandlerDecl, EnumDecl, EventKind, Expr,
-    ExternFnDecl, FnDecl, Ident, Literal, MockValue, Program, ProtocolDecl, RecordDecl,
-    RestartPolicy, Stmt, StringPart, SupervisionStrategy, SupervisorDecl, TestDecl, TypeExpr,
-    UnaryOp,
+    AgentDecl, BinOp, Block, ConstDecl, EffectHandlerDecl, EnumDecl, EventKind, Expr, ExternFnDecl,
+    FnDecl, Ident, Literal, MockValue, Program, ProtocolDecl, RecordDecl, RestartPolicy, Stmt,
+    StringPart, SupervisionStrategy, SupervisorDecl, TestDecl, TypeExpr, UnaryOp,
 };
 
 /// How to specify the sage-runtime dependency in generated Cargo.toml.
@@ -291,19 +290,25 @@ impl Generator {
                     .writeln("sage_runtime::persistence::MemoryCheckpointStore::new()");
             }
             PersistenceBackend::Sqlite { path } => {
-                self.emit.write("sage_runtime::persistence::SyncSqliteStore::open(\"");
+                self.emit
+                    .write("sage_runtime::persistence::SyncSqliteStore::open(\"");
                 self.emit.write(path);
-                self.emit.writeln("\").expect(\"Failed to open checkpoint database\")");
+                self.emit
+                    .writeln("\").expect(\"Failed to open checkpoint database\")");
             }
             PersistenceBackend::Postgres { url } => {
-                self.emit.write("sage_runtime::persistence::SyncPostgresStore::connect(\"");
+                self.emit
+                    .write("sage_runtime::persistence::SyncPostgresStore::connect(\"");
                 self.emit.write(url);
-                self.emit.writeln("\").expect(\"Failed to connect to checkpoint database\")");
+                self.emit
+                    .writeln("\").expect(\"Failed to connect to checkpoint database\")");
             }
             PersistenceBackend::File { path } => {
-                self.emit.write("sage_runtime::persistence::SyncFileStore::open(\"");
+                self.emit
+                    .write("sage_runtime::persistence::SyncFileStore::open(\"");
                 self.emit.write(path);
-                self.emit.writeln("\").expect(\"Failed to open checkpoint directory\")");
+                self.emit
+                    .writeln("\").expect(\"Failed to open checkpoint directory\")");
             }
         }
     }
@@ -316,7 +321,9 @@ impl Generator {
             self.emit.writeln("sage_runtime::trace::init();");
         } else {
             // Use config-based init
-            self.emit.writeln("sage_runtime::trace::init_with_config(sage_runtime::trace::TracingConfig {");
+            self.emit.writeln(
+                "sage_runtime::trace::init_with_config(sage_runtime::trace::TracingConfig {",
+            );
             self.emit.indent();
             self.emit.write("backend: \"");
             self.emit.write(&obs.backend);
@@ -329,7 +336,11 @@ impl Generator {
                 self.emit.writeln("otlp_endpoint: None,");
             }
             self.emit.write("service_name: \"");
-            self.emit.write(if obs.service_name.is_empty() { "sage-agent" } else { &obs.service_name });
+            self.emit.write(if obs.service_name.is_empty() {
+                "sage-agent"
+            } else {
+                &obs.service_name
+            });
             self.emit.writeln("\".to_string(),");
             self.emit.dedent();
             self.emit.writeln("});");
@@ -470,7 +481,7 @@ impl Generator {
     fn generate_module_tree(&mut self, tree: &ModuleTree) -> String {
         // Pre-pass: Collect agent metadata and extern fns from all modules
         let mut has_extern_fns = false;
-        for (_path, module) in &tree.modules {
+        for module in tree.modules.values() {
             for agent in &module.program.agents {
                 self.collect_agent_metadata(agent);
             }
@@ -1278,7 +1289,11 @@ serde_json = "1"
             .handlers
             .iter()
             .filter_map(|h| {
-                if let EventKind::Message { param_name, param_ty } = &h.event {
+                if let EventKind::Message {
+                    param_name,
+                    param_ty,
+                } = &h.event
+                {
                     Some((param_name.clone(), param_ty.clone()))
                 } else {
                     None
@@ -1288,7 +1303,9 @@ serde_json = "1"
         if !message_handlers.is_empty() {
             self.agents_with_message_handlers.insert(
                 name.clone(),
-                AgentMessageHandlers { handlers: message_handlers },
+                AgentMessageHandlers {
+                    handlers: message_handlers,
+                },
             );
         }
     }
@@ -1341,7 +1358,8 @@ serde_json = "1"
 
             // Add checkpoint store field if agent has persistent beliefs
             if has_persistent {
-                self.emit.writeln("_checkpoint: std::sync::Arc<dyn CheckpointStore>,");
+                self.emit
+                    .writeln("_checkpoint: std::sync::Arc<dyn CheckpointStore>,");
                 self.emit.writeln("_checkpoint_key: String,");
             }
 
@@ -1529,7 +1547,11 @@ serde_json = "1"
             .handlers
             .iter()
             .filter_map(|h| {
-                if let EventKind::Message { param_name, param_ty } = &h.event {
+                if let EventKind::Message {
+                    param_name,
+                    param_ty,
+                } = &h.event
+                {
                     Some((param_name.clone(), param_ty.clone()))
                 } else {
                     None
@@ -1549,8 +1571,11 @@ serde_json = "1"
 
         // v2.0: Initialize checkpoint store if agent has persistent fields
         if has_persistent {
-            self.emit.writeln("// Initialize persistence checkpoint store");
-            self.emit.writeln("let _checkpoint: std::sync::Arc<dyn CheckpointStore> = std::sync::Arc::new(");
+            self.emit
+                .writeln("// Initialize persistence checkpoint store");
+            self.emit.writeln(
+                "let _checkpoint: std::sync::Arc<dyn CheckpointStore> = std::sync::Arc::new(",
+            );
             self.emit.indent();
             self.emit_checkpoint_store_init();
             self.emit.dedent();
@@ -1641,8 +1666,10 @@ serde_json = "1"
         for tool_use in &agent.tool_uses {
             if tool_use.name == "Database" {
                 // Database requires async initialization
-                self.emit.write("let _db_client = DatabaseClient::from_env().await");
-                self.emit.writeln(".expect(\"Failed to connect to database\");");
+                self.emit
+                    .write("let _db_client = DatabaseClient::from_env().await");
+                self.emit
+                    .writeln(".expect(\"Failed to connect to database\");");
             }
         }
 
@@ -1653,7 +1680,8 @@ serde_json = "1"
         // v2.0: Call on_waking after persistent state is loaded
         if has_waking {
             self.emit.writeln("");
-            self.emit.writeln("// on_waking: runs after persistent state loaded, before on_start");
+            self.emit
+                .writeln("// on_waking: runs after persistent state loaded, before on_start");
             self.emit.writeln("agent.on_waking().await;");
         }
 
@@ -1832,7 +1860,8 @@ serde_json = "1"
         self.emit.writeln("");
 
         // Create the supervisor with the configured strategy
-        self.emit.write("let mut supervisor = Supervisor::new(Strategy::");
+        self.emit
+            .write("let mut supervisor = Supervisor::new(Strategy::");
         match supervisor.strategy {
             SupervisionStrategy::OneForOne => self.emit.write("OneForOne"),
             SupervisionStrategy::OneForAll => self.emit.write("OneForAll"),
@@ -1840,8 +1869,7 @@ serde_json = "1"
         }
         self.emit.writeln(&format!(
             ", RestartConfig {{ max_restarts: {}, within: std::time::Duration::from_secs({}) }});",
-            self.config.supervision.max_restarts,
-            self.config.supervision.within_seconds
+            self.config.supervision.max_restarts, self.config.supervision.within_seconds
         ));
         self.emit.writeln("");
 
@@ -1906,7 +1934,9 @@ serde_json = "1"
 
             // Initialize checkpoint store if needed
             if has_persistent {
-                self.emit.writeln("let _checkpoint: std::sync::Arc<dyn CheckpointStore> = std::sync::Arc::new(");
+                self.emit.writeln(
+                    "let _checkpoint: std::sync::Arc<dyn CheckpointStore> = std::sync::Arc::new(",
+                );
                 self.emit.indent();
                 self.emit_checkpoint_store_init();
                 self.emit.dedent();
@@ -1920,8 +1950,10 @@ serde_json = "1"
             if let Some(agent) = agent {
                 for tool_use in &agent.tool_uses {
                     if tool_use.name == "Database" {
-                        self.emit.write("let _db_client = DatabaseClient::from_env().await");
-                        self.emit.writeln(".expect(\"Failed to connect to database\");");
+                        self.emit
+                            .write("let _db_client = DatabaseClient::from_env().await");
+                        self.emit
+                            .writeln(".expect(\"Failed to connect to database\");");
                     }
                 }
             }
@@ -1935,8 +1967,10 @@ serde_json = "1"
 
                 // Add checkpoint fields if persistent
                 if has_persistent {
-                    self.emit.writeln("_checkpoint: std::sync::Arc::clone(&_checkpoint),");
-                    self.emit.writeln("_checkpoint_key: _checkpoint_key.clone(),");
+                    self.emit
+                        .writeln("_checkpoint: std::sync::Arc::clone(&_checkpoint),");
+                    self.emit
+                        .writeln("_checkpoint_key: _checkpoint_key.clone(),");
                 }
 
                 // Add tool fields
@@ -1958,7 +1992,10 @@ serde_json = "1"
                 if let Some(agent) = agent {
                     for belief in &agent.beliefs {
                         // Check if there's an initial value in child spec
-                        let init_value = child.beliefs.iter().find(|f| f.name.name == belief.name.name);
+                        let init_value = child
+                            .beliefs
+                            .iter()
+                            .find(|f| f.name.name == belief.name.name);
 
                         self.emit.write(&belief.name.name);
                         self.emit.write(": ");
@@ -1998,17 +2035,29 @@ serde_json = "1"
 
             // Check for waking handler
             let has_waking = agent
-                .map(|a| a.handlers.iter().any(|h| matches!(h.event, EventKind::Waking)))
+                .map(|a| {
+                    a.handlers
+                        .iter()
+                        .any(|h| matches!(h.event, EventKind::Waking))
+                })
                 .unwrap_or(false);
 
             // Check for error handler
             let has_error_handler = agent
-                .map(|a| a.handlers.iter().any(|h| matches!(h.event, EventKind::Error { .. })))
+                .map(|a| {
+                    a.handlers
+                        .iter()
+                        .any(|h| matches!(h.event, EventKind::Error { .. }))
+                })
                 .unwrap_or(false);
 
             // Check for stop handler
             let has_stop_handler = agent
-                .map(|a| a.handlers.iter().any(|h| matches!(h.event, EventKind::Stop | EventKind::Resting)))
+                .map(|a| {
+                    a.handlers
+                        .iter()
+                        .any(|h| matches!(h.event, EventKind::Stop | EventKind::Resting))
+                })
                 .unwrap_or(false);
 
             // Phase 3: Check for Infer effect handler assignment
@@ -2021,8 +2070,10 @@ serde_json = "1"
             // Create the agent handle and run it
             if let Some(handler_name) = &infer_handler {
                 // Generate LlmConfig from handler
-                self.emit.writeln("// Phase 3: Use effect handler configuration");
-                self.emit.write("let llm_config = sage_runtime::LlmConfig::with_model(handler_");
+                self.emit
+                    .writeln("// Phase 3: Use effect handler configuration");
+                self.emit
+                    .write("let llm_config = sage_runtime::LlmConfig::with_model(handler_");
                 self.emit.write(&Self::to_snake_case(handler_name));
                 self.emit.writeln("::CONFIG.model)");
                 self.emit.indent();
@@ -2035,9 +2086,12 @@ serde_json = "1"
                 self.emit.write(&Self::to_snake_case(handler_name));
                 self.emit.writeln("::CONFIG.max_tokens);");
                 self.emit.dedent();
-                self.emit.writeln("let handle = sage_runtime::spawn_with_llm_config(move |mut ctx| async move {");
+                self.emit.writeln(
+                    "let handle = sage_runtime::spawn_with_llm_config(move |mut ctx| async move {",
+                );
             } else {
-                self.emit.writeln("let handle = sage_runtime::spawn(move |mut ctx| async move {");
+                self.emit
+                    .writeln("let handle = sage_runtime::spawn(move |mut ctx| async move {");
             }
             self.emit.indent();
 
@@ -2048,14 +2102,17 @@ serde_json = "1"
 
             // Generate the main execution with error handling
             if has_error_handler {
-                self.emit.writeln("let result = match agent.on_start(&mut ctx).await {");
+                self.emit
+                    .writeln("let result = match agent.on_start(&mut ctx).await {");
                 self.emit.indent();
                 self.emit.writeln("Ok(result) => Ok(result),");
-                self.emit.writeln("Err(e) => agent.on_error(e, &mut ctx).await,");
+                self.emit
+                    .writeln("Err(e) => agent.on_error(e, &mut ctx).await,");
                 self.emit.dedent();
                 self.emit.writeln("};");
             } else {
-                self.emit.writeln("let result = agent.on_start(&mut ctx).await;");
+                self.emit
+                    .writeln("let result = agent.on_start(&mut ctx).await;");
             }
 
             // Call on_stop if present
@@ -2068,7 +2125,8 @@ serde_json = "1"
             self.emit.writeln("});");
 
             // Wait for the handle result, discarding the value and returning Ok(())
-            self.emit.writeln("handle.result().await.map_err(|e| SageError::Agent(e.to_string()))?;");
+            self.emit
+                .writeln("handle.result().await.map_err(|e| SageError::Agent(e.to_string()))?;");
             self.emit.writeln("Ok(())");
 
             self.emit.dedent();
@@ -2079,7 +2137,8 @@ serde_json = "1"
         }
 
         // Set up graceful shutdown signal handling
-        self.emit.writeln("let ctrl_c = async { tokio::signal::ctrl_c().await.ok() };");
+        self.emit
+            .writeln("let ctrl_c = async { tokio::signal::ctrl_c().await.ok() };");
         self.emit.writeln("");
         self.emit.writeln("#[cfg(unix)]");
         self.emit.writeln("let terminate = async {");
@@ -2096,7 +2155,8 @@ serde_json = "1"
         self.emit.dedent();
         self.emit.writeln("};");
         self.emit.writeln("#[cfg(not(unix))]");
-        self.emit.writeln("let terminate = std::future::pending::<()>();");
+        self.emit
+            .writeln("let terminate = std::future::pending::<()>();");
         self.emit.writeln("");
 
         // Run the supervisor with signal handling
@@ -2112,13 +2172,15 @@ serde_json = "1"
         self.emit.writeln("result = supervisor.run() => result,");
         self.emit.writeln("_ = ctrl_c => {");
         self.emit.indent();
-        self.emit.writeln("eprintln!(\"\\nReceived interrupt signal, shutting down supervisor...\");");
+        self.emit
+            .writeln("eprintln!(\"\\nReceived interrupt signal, shutting down supervisor...\");");
         self.emit.writeln("return Ok(());");
         self.emit.dedent();
         self.emit.writeln("}");
         self.emit.writeln("_ = terminate => {");
         self.emit.indent();
-        self.emit.writeln("eprintln!(\"Received terminate signal, shutting down supervisor...\");");
+        self.emit
+            .writeln("eprintln!(\"Received terminate signal, shutting down supervisor...\");");
         self.emit.writeln("return Ok(());");
         self.emit.dedent();
         self.emit.writeln("}");
@@ -2177,7 +2239,8 @@ serde_json = "1"
 
         // Generate state enum
         // States are: Initial, then one state after each step, plus Done
-        self.emit.writeln("#[derive(Debug, Clone, Copy, PartialEq, Eq)]");
+        self.emit
+            .writeln("#[derive(Debug, Clone, Copy, PartialEq, Eq)]");
         self.emit.writeln("pub enum State {");
         self.emit.indent();
         self.emit.writeln("Initial,");
@@ -2238,7 +2301,8 @@ serde_json = "1"
         self.emit.blank_line();
 
         // can_send()
-        self.emit.writeln("fn can_send(&self, msg_type: &str, from_role: &str) -> bool {");
+        self.emit
+            .writeln("fn can_send(&self, msg_type: &str, from_role: &str) -> bool {");
         self.emit.indent();
         self.emit.writeln("match (self, msg_type, from_role) {");
         self.emit.indent();
@@ -2270,7 +2334,8 @@ serde_json = "1"
         self.emit.blank_line();
 
         // can_receive()
-        self.emit.writeln("fn can_receive(&self, msg_type: &str, to_role: &str) -> bool {");
+        self.emit
+            .writeln("fn can_receive(&self, msg_type: &str, to_role: &str) -> bool {");
         self.emit.indent();
         self.emit.writeln("match (self, msg_type, to_role) {");
         self.emit.indent();
@@ -2302,7 +2367,8 @@ serde_json = "1"
         self.emit.blank_line();
 
         // transition()
-        self.emit.writeln("fn transition(&mut self, msg_type: &str) -> Result<(), ProtocolViolation> {");
+        self.emit
+            .writeln("fn transition(&mut self, msg_type: &str) -> Result<(), ProtocolViolation> {");
         self.emit.indent();
         self.emit.writeln("let next = match (&self, msg_type) {");
         self.emit.indent();
@@ -2336,7 +2402,8 @@ serde_json = "1"
             self.emit.write(&next_state);
             self.emit.writeln(",");
         }
-        self.emit.writeln("_ => return Err(ProtocolViolation::UnexpectedMessage {");
+        self.emit
+            .writeln("_ => return Err(ProtocolViolation::UnexpectedMessage {");
         self.emit.indent();
         self.emit.write("protocol: \"");
         self.emit.write(name);
@@ -2373,7 +2440,8 @@ serde_json = "1"
         self.emit.blank_line();
 
         // clone_box()
-        self.emit.writeln("fn clone_box(&self) -> Box<dyn ProtocolStateMachine> {");
+        self.emit
+            .writeln("fn clone_box(&self) -> Box<dyn ProtocolStateMachine> {");
         self.emit.indent();
         self.emit.writeln("Box::new(*self)");
         self.emit.dedent();
@@ -2679,8 +2747,10 @@ serde_json = "1"
                 self.emit.write("let __span_name = ");
                 self.generate_expr(name);
                 self.emit.writeln(";");
-                self.emit.writeln("let __span_start = std::time::Instant::now();");
-                self.emit.writeln("sage_runtime::trace::span_start(&__span_name);");
+                self.emit
+                    .writeln("let __span_start = std::time::Instant::now();");
+                self.emit
+                    .writeln("sage_runtime::trace::span_start(&__span_name);");
                 // Generate body statements
                 self.generate_block(body);
                 self.emit.writeln(
@@ -2697,7 +2767,8 @@ serde_json = "1"
                     // No persistent fields - checkpoint is a no-op
                     self.emit.writeln("// checkpoint() - no @persistent fields");
                 } else {
-                    self.emit.writeln("// checkpoint() - save all @persistent beliefs");
+                    self.emit
+                        .writeln("// checkpoint() - save all @persistent beliefs");
                     for field_name in &self.current_agent_persistent_beliefs.clone() {
                         self.emit.write("self_");
                         self.emit.write(field_name);
@@ -3563,8 +3634,7 @@ serde_json = "1"
                         self.emit.write(")");
                         // Fallible extern fns need error conversion
                         if self.extern_fn_fallible.contains(name) {
-                            self.emit
-                                .write(".map_err(sage_runtime::SageError::agent)?");
+                            self.emit.write(".map_err(sage_runtime::SageError::agent)?");
                         }
                     }
 
@@ -3656,7 +3726,11 @@ serde_json = "1"
             Expr::Summon { agent, fields, .. } => {
                 let has_error_handler = self.agents_with_error_handlers.contains(&agent.name);
                 let message_handlers = self.agents_with_message_handlers.get(&agent.name).cloned();
-                let tool_uses = self.agent_tool_uses.get(&agent.name).cloned().unwrap_or_default();
+                let tool_uses = self
+                    .agent_tool_uses
+                    .get(&agent.name)
+                    .cloned()
+                    .unwrap_or_default();
 
                 // Wrap in a block so we can emit clone bindings before the spawn
                 self.emit.write("{ ");
@@ -3685,7 +3759,9 @@ serde_json = "1"
                     }
                     // Add tool fields automatically
                     for tool_name in &tool_uses {
-                        if !fields.is_empty() || tool_uses.iter().position(|t| t == tool_name) != Some(0) {
+                        if !fields.is_empty()
+                            || tool_uses.iter().position(|t| t == tool_name) != Some(0)
+                        {
                             self.emit.write(", ");
                         }
                         self.emit.write(&tool_name.to_lowercase());
@@ -3693,7 +3769,7 @@ serde_json = "1"
                         if tool_name == "Database" {
                             self.emit.write("DatabaseClient::from_env().await.expect(\"Failed to connect to database\")");
                         } else {
-                            self.emit.write(&tool_name);
+                            self.emit.write(tool_name);
                             self.emit.write("Client::from_env()");
                         }
                     }
@@ -3702,11 +3778,14 @@ serde_json = "1"
 
                 // on_start with optional error handling
                 if has_error_handler {
-                    self.emit.write("let result = match agent.on_start(&mut ctx).await { ");
+                    self.emit
+                        .write("let result = match agent.on_start(&mut ctx).await { ");
                     self.emit.write("Ok(result) => Ok(result), ");
-                    self.emit.write("Err(e) => agent.on_error(e, &mut ctx).await }; ");
+                    self.emit
+                        .write("Err(e) => agent.on_error(e, &mut ctx).await }; ");
                 } else {
-                    self.emit.write("let result = agent.on_start(&mut ctx).await; ");
+                    self.emit
+                        .write("let result = agent.on_start(&mut ctx).await; ");
                 }
 
                 // Message receive loop (if agent has message handlers)
@@ -3726,7 +3805,8 @@ serde_json = "1"
                         self.emit.write("\") => { ");
                         self.emit.write("if let Ok(");
                         self.emit.write(&param_name.name);
-                        self.emit.write(") = serde_json::from_value(msg.payload) { ");
+                        self.emit
+                            .write(") = serde_json::from_value(msg.payload) { ");
                         self.emit.write("let _ = agent.");
                         self.emit.write(&method_name);
                         self.emit.write("(");
@@ -3896,8 +3976,7 @@ serde_json = "1"
             // fail expression - explicit error raising
             Expr::Fail { error, .. } => {
                 // Generate: return Err(SageError::user(msg))
-                self.emit
-                    .write("return Err(sage_runtime::SageError::user(");
+                self.emit.write("return Err(sage_runtime::SageError::user(");
                 self.generate_expr(error);
                 self.emit.write("))");
             }
@@ -4090,7 +4169,11 @@ serde_json = "1"
             // Phase 3: Reply expression for session types
             Expr::Reply { message, .. } => {
                 // Clone protocol info to avoid borrow issues
-                let protocol_role = self.current_protocol_roles.iter().next().map(|(_, r)| r.clone());
+                let protocol_role = self
+                    .current_protocol_roles
+                    .iter()
+                    .next()
+                    .map(|(_, r)| r.clone());
 
                 if let Some(role) = protocol_role {
                     // Agent follows protocols - use reply_with_protocol for validation
@@ -4501,6 +4584,7 @@ serde_json = "1"
     /// Convert a TypeExpr to its base type name string.
     ///
     /// Used for generating method names from message types.
+    #[allow(clippy::only_used_in_recursion)]
     fn type_expr_to_string(&self, ty: &TypeExpr) -> String {
         match ty {
             TypeExpr::Int => "Int".to_string(),
@@ -4515,7 +4599,11 @@ serde_json = "1"
             TypeExpr::Agent(name) => name.name.clone(),
             TypeExpr::Error => "Error".to_string(),
             TypeExpr::Map(k, v) => {
-                format!("Map{}To{}", self.type_expr_to_string(k), self.type_expr_to_string(v))
+                format!(
+                    "Map{}To{}",
+                    self.type_expr_to_string(k),
+                    self.type_expr_to_string(v)
+                )
             }
             TypeExpr::Fn(_, _) => "Fn".to_string(),
             TypeExpr::Tuple(elems) => {
@@ -4523,7 +4611,11 @@ serde_json = "1"
                 format!("Tuple{}", parts.join(""))
             }
             TypeExpr::Result(ok, err) => {
-                format!("Result{}Or{}", self.type_expr_to_string(ok), self.type_expr_to_string(err))
+                format!(
+                    "Result{}Or{}",
+                    self.type_expr_to_string(ok),
+                    self.type_expr_to_string(err)
+                )
             }
         }
     }
@@ -4625,14 +4717,32 @@ mod tests {
         let output = generate_source(source);
         // Agent struct should have checkpoint fields and Persisted wrapper
         assert!(output.contains("_checkpoint:"), "missing checkpoint field");
-        assert!(output.contains("_checkpoint_key:"), "missing checkpoint key field");
-        assert!(output.contains("Persisted<i64>"), "count should be wrapped in Persisted");
+        assert!(
+            output.contains("_checkpoint_key:"),
+            "missing checkpoint key field"
+        );
+        assert!(
+            output.contains("Persisted<i64>"),
+            "count should be wrapped in Persisted"
+        );
         // Main should initialize checkpoint store
-        assert!(output.contains("MemoryCheckpointStore"), "missing checkpoint store init");
-        assert!(output.contains("Persisted::new"), "missing Persisted::new in construction");
+        assert!(
+            output.contains("MemoryCheckpointStore"),
+            "missing checkpoint store init"
+        );
+        assert!(
+            output.contains("Persisted::new"),
+            "missing Persisted::new in construction"
+        );
         // on_waking handler should be generated and called
-        assert!(output.contains("async fn on_waking"), "missing on_waking handler");
-        assert!(output.contains("agent.on_waking().await"), "missing on_waking call");
+        assert!(
+            output.contains("async fn on_waking"),
+            "missing on_waking handler"
+        );
+        assert!(
+            output.contains("agent.on_waking().await"),
+            "missing on_waking call"
+        );
     }
 
     #[test]
@@ -4803,7 +4913,9 @@ run AppSupervisor;
         );
         // Verify supervisor main is generated
         assert!(
-            project.main_rs.contains("Supervisor::new(Strategy::OneForOne"),
+            project
+                .main_rs
+                .contains("Supervisor::new(Strategy::OneForOne"),
             "Missing supervisor main. Output:\n{}",
             project.main_rs
         );
@@ -5112,7 +5224,8 @@ run DbGuardian;
 
         let output = generate_source(source);
         // Tool call should generate self.http.get(...).await (no ?, handled by try/catch)
-        assert!(output.contains("self.http.get(\"https://httpbin.org/get\".to_string()).await"));
+        assert!(output
+            .contains("self.http.get((\"https://httpbin.org/get\".to_string()).clone()).await"));
     }
 
     fn generate_test_source(source: &str) -> String {
@@ -5472,7 +5585,11 @@ run DbGuardian;
         let output = generate_source(source);
 
         // Check module is generated (FastLlm -> fast_llm)
-        assert!(output.contains("mod handler_fast_llm"), "Should contain handler module: {}", output);
+        assert!(
+            output.contains("mod handler_fast_llm"),
+            "Should contain handler module: {}",
+            output
+        );
 
         // Check Config struct
         assert!(output.contains("pub struct Config"));

@@ -139,7 +139,7 @@ pub fn load_project(project_path: &Path) -> Result<ModuleTree, Vec<LoadError>> {
         }]);
     }
 
-    let manifest = ProjectManifest::load(&manifest_path).map_err(|e| vec![e])?;
+    let manifest = ProjectManifest::load(&manifest_path).map_err(|e| vec![*e])?;
     let project_root = manifest_path.parent().unwrap().to_path_buf();
     let entry_path = project_root.join(&manifest.project.entry);
 
@@ -203,11 +203,11 @@ pub fn load_project_with_packages(
         }]);
     }
 
-    let manifest = ProjectManifest::load(&manifest_path).map_err(|e| vec![e])?;
+    let manifest = ProjectManifest::load(&manifest_path).map_err(|e| vec![*e])?;
     let project_root = manifest_path.parent().unwrap().to_path_buf();
 
     // Parse dependencies
-    let deps = manifest.parse_dependencies().map_err(|e| vec![e])?;
+    let deps = manifest.parse_dependencies().map_err(|e| vec![*e])?;
 
     // Resolve external packages
     let external_roots = if deps.is_empty() {

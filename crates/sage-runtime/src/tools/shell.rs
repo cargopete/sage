@@ -77,8 +77,7 @@ mod tests {
 
     #[test]
     fn shell_client_creates() {
-        let client = ShellClient::new();
-        drop(client);
+        let _client = ShellClient::new();
     }
 
     #[tokio::test]
@@ -100,10 +99,7 @@ mod tests {
     #[tokio::test]
     async fn shell_run_stderr() {
         let client = ShellClient::new();
-        let result = client
-            .run("echo error >&2".to_string())
-            .await
-            .unwrap();
+        let result = client.run("echo error >&2".to_string()).await.unwrap();
         assert_eq!(result.exit_code, 0);
         assert!(result.stdout.is_empty());
         assert_eq!(result.stderr.trim(), "error");

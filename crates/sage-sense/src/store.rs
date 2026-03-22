@@ -6,6 +6,7 @@ use tower_lsp::lsp_types::{Diagnostic, Url};
 
 /// State for a single open document.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct Document {
     /// The document's text content.
     pub text: String,
@@ -20,6 +21,7 @@ pub struct DocumentStore {
     inner: Mutex<HashMap<String, Document>>,
 }
 
+#[allow(dead_code)]
 impl DocumentStore {
     /// Create a new empty document store.
     pub fn new() -> Self {

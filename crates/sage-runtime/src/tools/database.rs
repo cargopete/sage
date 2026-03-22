@@ -59,8 +59,9 @@ impl DatabaseClient {
     /// - `SAGE_DATABASE_URL`: Database connection URL (required)
     #[cfg(feature = "database")]
     pub async fn from_env() -> SageResult<Self> {
-        let url = std::env::var("SAGE_DATABASE_URL")
-            .map_err(|_| SageError::Tool("SAGE_DATABASE_URL environment variable not set".to_string()))?;
+        let url = std::env::var("SAGE_DATABASE_URL").map_err(|_| {
+            SageError::Tool("SAGE_DATABASE_URL environment variable not set".to_string())
+        })?;
         Self::connect(&url).await
     }
 
@@ -94,7 +95,8 @@ impl DatabaseClient {
         let result: Vec<DbRow> = rows
             .iter()
             .map(|row| {
-                let columns: Vec<String> = row.columns().iter().map(|c| c.name().to_string()).collect();
+                let columns: Vec<String> =
+                    row.columns().iter().map(|c| c.name().to_string()).collect();
                 let values: Vec<String> = (0..row.columns().len())
                     .map(|i| {
                         // Try to get the value as different types
@@ -198,7 +200,9 @@ mod tests {
     #[tokio::test]
     async fn database_connect_sqlite() {
         // Use shared cache mode for in-memory database
-        let client = DatabaseClient::connect("sqlite:file::memory:?mode=memory&cache=shared").await.unwrap();
+        let client = DatabaseClient::connect("sqlite:file::memory:?mode=memory&cache=shared")
+            .await
+            .unwrap();
         drop(client);
     }
 
@@ -239,7 +243,9 @@ mod tests {
 
     #[tokio::test]
     async fn database_query_select_one() {
-        let client = DatabaseClient::connect("sqlite:file::memory:?mode=memory&cache=shared").await.unwrap();
+        let client = DatabaseClient::connect("sqlite:file::memory:?mode=memory&cache=shared")
+            .await
+            .unwrap();
         let rows = client.query("SELECT 1 as value".to_string()).await.unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].columns, vec!["value"]);

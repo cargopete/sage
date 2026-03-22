@@ -35,7 +35,13 @@ impl FileStore {
         // Sanitize agent key for filename safety
         let safe_key: String = agent_key
             .chars()
-            .map(|c| if c.is_alphanumeric() || c == '_' || c == '-' { c } else { '_' })
+            .map(|c| {
+                if c.is_alphanumeric() || c == '_' || c == '-' {
+                    c
+                } else {
+                    '_'
+                }
+            })
             .collect();
         self.dir.join(format!("{safe_key}.json"))
     }

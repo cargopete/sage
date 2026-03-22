@@ -40,7 +40,9 @@ mod error;
 mod scope;
 mod types;
 
-pub use checker::{check, check_test_file, check_module_tree, CheckResult, Checker, ModuleCheckResult, ModulePath};
+pub use checker::{
+    check, check_module_tree, check_test_file, CheckResult, Checker, ModuleCheckResult, ModulePath,
+};
 pub use error::CheckError;
 pub use scope::{AgentInfo, FunctionInfo, Scope, SymbolTable};
 pub use types::Type;
@@ -1297,7 +1299,11 @@ run Main;
             .iter()
             .filter(|e| matches!(e, CheckError::PersistentFieldNotSerializable { .. }))
             .collect();
-        assert!(!persistence_errors.is_empty(), "expected E052 error, got: {:?}", result.errors);
+        assert!(
+            !persistence_errors.is_empty(),
+            "expected E052 error, got: {:?}",
+            result.errors
+        );
         assert!(
             matches!(
                 persistence_errors[0],
@@ -1329,7 +1335,11 @@ run Main;
             .iter()
             .filter(|e| matches!(e, CheckError::PersistentFieldNotSerializable { .. }))
             .collect();
-        assert!(errors.is_empty(), "unexpected persistence error: {:?}", errors);
+        assert!(
+            errors.is_empty(),
+            "unexpected persistence error: {:?}",
+            errors
+        );
     }
 
     #[test]
@@ -1356,7 +1366,11 @@ run Main;
             .iter()
             .filter(|e| matches!(e, CheckError::WakingWithoutPersistentFields { .. }))
             .collect();
-        assert!(!warnings.is_empty(), "expected W006 warning, got {:?}", result.errors);
+        assert!(
+            !warnings.is_empty(),
+            "expected W006 warning, got {:?}",
+            result.errors
+        );
     }
 
     #[test]
@@ -1383,7 +1397,11 @@ run Main;
             .iter()
             .filter(|e| matches!(e, CheckError::WakingWithoutPersistentFields { .. }))
             .collect();
-        assert!(warnings.is_empty(), "unexpected W006 warning: {:?}", warnings);
+        assert!(
+            warnings.is_empty(),
+            "unexpected W006 warning: {:?}",
+            warnings
+        );
     }
 
     // =========================================================================
@@ -1682,8 +1700,16 @@ run Main;
         "#;
 
         let (_, result) = check_source(source);
-        assert_eq!(result.errors.len(), 1, "expected 1 error, got {:?}", result.errors);
-        assert!(matches!(result.errors[0], CheckError::UnknownProtocol { .. }));
+        assert_eq!(
+            result.errors.len(),
+            1,
+            "expected 1 error, got {:?}",
+            result.errors
+        );
+        assert!(matches!(
+            result.errors[0],
+            CheckError::UnknownProtocol { .. }
+        ));
     }
 
     #[test]
@@ -1702,8 +1728,16 @@ run Main;
         "#;
 
         let (_, result) = check_source(source);
-        assert_eq!(result.errors.len(), 1, "expected 1 error, got {:?}", result.errors);
-        assert!(matches!(result.errors[0], CheckError::UnknownProtocolRole { .. }));
+        assert_eq!(
+            result.errors.len(),
+            1,
+            "expected 1 error, got {:?}",
+            result.errors
+        );
+        assert!(matches!(
+            result.errors[0],
+            CheckError::UnknownProtocolRole { .. }
+        ));
     }
 
     #[test]
@@ -1736,8 +1770,16 @@ run Main;
         "#;
 
         let (_, result) = check_source(source);
-        assert_eq!(result.errors.len(), 1, "expected 1 error, got {:?}", result.errors);
-        assert!(matches!(result.errors[0], CheckError::ReplyOutsideMessageHandler { .. }));
+        assert_eq!(
+            result.errors.len(),
+            1,
+            "expected 1 error, got {:?}",
+            result.errors
+        );
+        assert!(matches!(
+            result.errors[0],
+            CheckError::ReplyOutsideMessageHandler { .. }
+        ));
     }
 
     #[test]
@@ -1813,8 +1855,16 @@ run Main;
         "#;
 
         let (_, result) = check_source(source);
-        assert_eq!(result.errors.len(), 1, "expected 1 error, got {:?}", result.errors);
-        assert!(matches!(result.errors[0], CheckError::UnknownEffectHandler { .. }));
+        assert_eq!(
+            result.errors.len(),
+            1,
+            "expected 1 error, got {:?}",
+            result.errors
+        );
+        assert!(matches!(
+            result.errors[0],
+            CheckError::UnknownEffectHandler { .. }
+        ));
     }
 
     // =========================================================================
@@ -1889,10 +1939,15 @@ run Main;
 
         let (_, result) = check_source(source);
         // Expect E074: ProtocolMessageMismatch (and possibly a type mismatch for the handler)
-        let has_protocol_error = result.errors.iter().any(|e| {
-            matches!(e, CheckError::ProtocolMessageMismatch { .. })
-        });
-        assert!(has_protocol_error, "expected E074 ProtocolMessageMismatch, got: {:?}", result.errors);
+        let has_protocol_error = result
+            .errors
+            .iter()
+            .any(|e| matches!(e, CheckError::ProtocolMessageMismatch { .. }));
+        assert!(
+            has_protocol_error,
+            "expected E074 ProtocolMessageMismatch, got: {:?}",
+            result.errors
+        );
     }
 
     #[test]
@@ -1928,10 +1983,15 @@ run Main;
         "#;
 
         let (_, result) = check_source(source);
-        let has_missing_reply = result.errors.iter().any(|e| {
-            matches!(e, CheckError::ProtocolMissingReply { .. })
-        });
-        assert!(has_missing_reply, "expected E076 ProtocolMissingReply, got: {:?}", result.errors);
+        let has_missing_reply = result
+            .errors
+            .iter()
+            .any(|e| matches!(e, CheckError::ProtocolMissingReply { .. }));
+        assert!(
+            has_missing_reply,
+            "expected E076 ProtocolMissingReply, got: {:?}",
+            result.errors
+        );
     }
 
     #[test]
@@ -1973,10 +2033,15 @@ run Main;
         "#;
 
         let (_, result) = check_source(source);
-        let has_no_shared = result.errors.iter().any(|e| {
-            matches!(e, CheckError::NoSharedProtocol { .. })
-        });
-        assert!(has_no_shared, "expected E078 NoSharedProtocol, got: {:?}", result.errors);
+        let has_no_shared = result
+            .errors
+            .iter()
+            .any(|e| matches!(e, CheckError::NoSharedProtocol { .. }));
+        assert!(
+            has_no_shared,
+            "expected E078 NoSharedProtocol, got: {:?}",
+            result.errors
+        );
     }
 
     #[test]
@@ -2007,11 +2072,18 @@ run Main;
         let (_, result) = check_source(source);
         // No protocol errors expected - both agents don't follow protocols
         let has_protocol_error = result.errors.iter().any(|e| {
-            matches!(e, CheckError::ProtocolMessageMismatch { .. }
-                | CheckError::NoSharedProtocol { .. }
-                | CheckError::ProtocolMissingReply { .. })
+            matches!(
+                e,
+                CheckError::ProtocolMessageMismatch { .. }
+                    | CheckError::NoSharedProtocol { .. }
+                    | CheckError::ProtocolMissingReply { .. }
+            )
         });
-        assert!(!has_protocol_error, "unexpected protocol error: {:?}", result.errors);
+        assert!(
+            !has_protocol_error,
+            "unexpected protocol error: {:?}",
+            result.errors
+        );
     }
 
     #[test]
@@ -2030,10 +2102,15 @@ run Main;
         "#;
 
         let (_, result) = check_source(source);
-        let has_reply_error = result.errors.iter().any(|e| {
-            matches!(e, CheckError::ReplyOutsideMessageHandler { .. })
-        });
-        assert!(has_reply_error, "expected E073 ReplyOutsideMessageHandler, got: {:?}", result.errors);
+        let has_reply_error = result
+            .errors
+            .iter()
+            .any(|e| matches!(e, CheckError::ReplyOutsideMessageHandler { .. }));
+        assert!(
+            has_reply_error,
+            "expected E073 ReplyOutsideMessageHandler, got: {:?}",
+            result.errors
+        );
     }
 
     // =========================================================================
@@ -2059,10 +2136,15 @@ run Main;
         "#;
 
         let (_, result) = check_source(source);
-        let has_checkpoint_error = result.errors.iter().any(|e| {
-            matches!(e, CheckError::CheckpointOutsideAgent { .. })
-        });
-        assert!(has_checkpoint_error, "expected E053 CheckpointOutsideAgent, got: {:?}", result.errors);
+        let has_checkpoint_error = result
+            .errors
+            .iter()
+            .any(|e| matches!(e, CheckError::CheckpointOutsideAgent { .. }));
+        assert!(
+            has_checkpoint_error,
+            "expected E053 CheckpointOutsideAgent, got: {:?}",
+            result.errors
+        );
     }
 
     #[test]
@@ -2082,10 +2164,15 @@ run Main;
         "#;
 
         let (_, result) = check_source(source);
-        let has_checkpoint_error = result.errors.iter().any(|e| {
-            matches!(e, CheckError::CheckpointOutsideAgent { .. })
-        });
-        assert!(!has_checkpoint_error, "unexpected E053 error: {:?}", result.errors);
+        let has_checkpoint_error = result
+            .errors
+            .iter()
+            .any(|e| matches!(e, CheckError::CheckpointOutsideAgent { .. }));
+        assert!(
+            !has_checkpoint_error,
+            "unexpected E053 error: {:?}",
+            result.errors
+        );
     }
 
     // =========================================================================
@@ -2112,10 +2199,15 @@ run Main;
         "#;
 
         let (_, result) = check_source(source);
-        let has_not_found_error = result.errors.iter().any(|e| {
-            matches!(e, CheckError::SupervisorChildNotFound { .. })
-        });
-        assert!(has_not_found_error, "expected E061 SupervisorChildNotFound, got: {:?}", result.errors);
+        let has_not_found_error = result
+            .errors
+            .iter()
+            .any(|e| matches!(e, CheckError::SupervisorChildNotFound { .. }));
+        assert!(
+            has_not_found_error,
+            "expected E061 SupervisorChildNotFound, got: {:?}",
+            result.errors
+        );
     }
 
     #[test]
@@ -2142,10 +2234,15 @@ run Main;
         "#;
 
         let (_, result) = check_source(source);
-        let has_missing_belief_error = result.errors.iter().any(|e| {
-            matches!(e, CheckError::SupervisorChildMissingBelief { .. })
-        });
-        assert!(has_missing_belief_error, "expected E062 SupervisorChildMissingBelief, got: {:?}", result.errors);
+        let has_missing_belief_error = result
+            .errors
+            .iter()
+            .any(|e| matches!(e, CheckError::SupervisorChildMissingBelief { .. }));
+        assert!(
+            has_missing_belief_error,
+            "expected E062 SupervisorChildMissingBelief, got: {:?}",
+            result.errors
+        );
     }
 
     #[test]
@@ -2172,11 +2269,18 @@ run Main;
 
         let (_, result) = check_source(source);
         let has_supervisor_error = result.errors.iter().any(|e| {
-            matches!(e, CheckError::SupervisorNoChildren { .. }
-                | CheckError::SupervisorChildNotFound { .. }
-                | CheckError::SupervisorChildMissingBelief { .. })
+            matches!(
+                e,
+                CheckError::SupervisorNoChildren { .. }
+                    | CheckError::SupervisorChildNotFound { .. }
+                    | CheckError::SupervisorChildMissingBelief { .. }
+            )
         });
-        assert!(!has_supervisor_error, "unexpected supervisor error: {:?}", result.errors);
+        assert!(
+            !has_supervisor_error,
+            "unexpected supervisor error: {:?}",
+            result.errors
+        );
     }
 
     // =========================================================================
@@ -2197,10 +2301,15 @@ run Main;
         "#;
 
         let (_, result) = check_test_source(source);
-        let has_duplicate_test = result.errors.iter().any(|e| {
-            matches!(e, CheckError::DuplicateTestName { .. })
-        });
-        assert!(has_duplicate_test, "expected E055 DuplicateTestName, got: {:?}", result.errors);
+        let has_duplicate_test = result
+            .errors
+            .iter()
+            .any(|e| matches!(e, CheckError::DuplicateTestName { .. }));
+        assert!(
+            has_duplicate_test,
+            "expected E055 DuplicateTestName, got: {:?}",
+            result.errors
+        );
     }
 
     #[test]
@@ -2217,10 +2326,15 @@ run Main;
         "#;
 
         let (_, result) = check_source(source);
-        let has_mock_error = result.errors.iter().any(|e| {
-            matches!(e, CheckError::MockInferOutsideTest { .. })
-        });
-        assert!(has_mock_error, "expected E056 MockInferOutsideTest, got: {:?}", result.errors);
+        let has_mock_error = result
+            .errors
+            .iter()
+            .any(|e| matches!(e, CheckError::MockInferOutsideTest { .. }));
+        assert!(
+            has_mock_error,
+            "expected E056 MockInferOutsideTest, got: {:?}",
+            result.errors
+        );
     }
 
     #[test]
@@ -2242,10 +2356,15 @@ run Main;
         "#;
 
         let (_, result) = check_source(source);
-        let has_mock_error = result.errors.iter().any(|e| {
-            matches!(e, CheckError::MockToolOutsideTest { .. })
-        });
-        assert!(has_mock_error, "expected E057 MockToolOutsideTest, got: {:?}", result.errors);
+        let has_mock_error = result
+            .errors
+            .iter()
+            .any(|e| matches!(e, CheckError::MockToolOutsideTest { .. }));
+        assert!(
+            has_mock_error,
+            "expected E057 MockToolOutsideTest, got: {:?}",
+            result.errors
+        );
     }
 
     #[test]
@@ -2259,10 +2378,15 @@ run Main;
         "#;
 
         let (_, result) = check_test_source(source);
-        let has_fail_error = result.errors.iter().any(|e| {
-            matches!(e, CheckError::MockFailNotString { .. })
-        });
-        assert!(has_fail_error, "expected E058 MockFailNotString, got: {:?}", result.errors);
+        let has_fail_error = result
+            .errors
+            .iter()
+            .any(|e| matches!(e, CheckError::MockFailNotString { .. }));
+        assert!(
+            has_fail_error,
+            "expected E058 MockFailNotString, got: {:?}",
+            result.errors
+        );
     }
 
     // Note: W004 PermanentWithoutPersistence is not yet implemented per checker.rs:721
@@ -2284,10 +2408,15 @@ run Main;
         "#;
 
         let (_, result) = check_source(source);
-        let has_unknown_protocol = result.errors.iter().any(|e| {
-            matches!(e, CheckError::UnknownProtocol { .. })
-        });
-        assert!(has_unknown_protocol, "expected E070 UnknownProtocol, got: {:?}", result.errors);
+        let has_unknown_protocol = result
+            .errors
+            .iter()
+            .any(|e| matches!(e, CheckError::UnknownProtocol { .. }));
+        assert!(
+            has_unknown_protocol,
+            "expected E070 UnknownProtocol, got: {:?}",
+            result.errors
+        );
     }
 
     #[test]
@@ -2310,10 +2439,15 @@ run Main;
         "#;
 
         let (_, result) = check_source(source);
-        let has_unknown_role = result.errors.iter().any(|e| {
-            matches!(e, CheckError::UnknownProtocolRole { .. })
-        });
-        assert!(has_unknown_role, "expected E071 UnknownProtocolRole, got: {:?}", result.errors);
+        let has_unknown_role = result
+            .errors
+            .iter()
+            .any(|e| matches!(e, CheckError::UnknownProtocolRole { .. }));
+        assert!(
+            has_unknown_role,
+            "expected E071 UnknownProtocolRole, got: {:?}",
+            result.errors
+        );
     }
 
     #[test]
@@ -2337,9 +2471,14 @@ run Main;
         "#;
 
         let (_, result) = check_source(source);
-        let has_unknown_handler = result.errors.iter().any(|e| {
-            matches!(e, CheckError::UnknownEffectHandler { .. })
-        });
-        assert!(has_unknown_handler, "expected E072 UnknownEffectHandler, got: {:?}", result.errors);
+        let has_unknown_handler = result
+            .errors
+            .iter()
+            .any(|e| matches!(e, CheckError::UnknownEffectHandler { .. }));
+        assert!(
+            has_unknown_handler,
+            "expected E072 UnknownEffectHandler, got: {:?}",
+            result.errors
+        );
     }
 }

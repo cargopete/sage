@@ -55,7 +55,7 @@ pub fn init_with_config(config: TracingConfig) {
                 .unwrap_or_else(|| "http://localhost:4318/v1/traces".to_string());
             Tracer::otlp(endpoint, config.service_name)
         }
-        "ndjson" | _ => {
+        _ => {
             // Check environment variables for NDJSON output
             if let Ok(path) = std::env::var("SAGE_TRACE_FILE") {
                 match OpenOptions::new().create(true).append(true).open(&path) {

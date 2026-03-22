@@ -7,8 +7,8 @@ repository.workspace = true
 description = "Code generator for compiling Sage to Rust"
 
 [dependencies]
-sage-parser = { path = "../sage-parser", version = "2.0.1" }
-sage-loader = { path = "../sage-loader", version = "2.0.1" }
+sage-parser = { path = "../sage-parser", version = "2.0.2" }
+sage-loader = { path = "../sage-loader", version = "2.0.2" }
 
 [dev-dependencies]
 tempfile = "3"

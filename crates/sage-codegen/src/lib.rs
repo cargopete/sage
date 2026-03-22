@@ -22,6 +22,6 @@ pub use generator::{
     generate, generate_module_tree, generate_module_tree_with_config,
     generate_module_tree_with_full_config, generate_test_program,
     generate_test_program_with_config, generate_with_config, generate_with_full_config,
-    CodegenConfig, GeneratedProject, GeneratedTestProject, ObservabilityConfig,
-    PersistenceBackend, RuntimeDep,
+    CodegenConfig, GeneratedProject, GeneratedTestProject, ObservabilityConfig, PersistenceBackend,
+    RuntimeDep,
 };

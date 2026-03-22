@@ -245,10 +245,7 @@ impl MockToolRegistry {
     pub fn register(&self, tool: &str, function: &str, response: MockResponse) {
         let key = format!("{}.{}", tool, function);
         let mut mocks = self.mocks.lock().unwrap();
-        mocks
-            .entry(key)
-            .or_insert_with(MockQueue::new)
-            .push(response);
+        mocks.entry(key).or_default().push(response);
     }
 
     /// Get the next mock response for a tool function.

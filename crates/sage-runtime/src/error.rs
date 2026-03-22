@@ -203,7 +203,10 @@ mod tests {
 
     #[test]
     fn protocol_error_classification() {
-        assert_eq!(SageError::protocol("unexpected message").kind(), ErrorKind::Protocol);
+        assert_eq!(
+            SageError::protocol("unexpected message").kind(),
+            ErrorKind::Protocol
+        );
         assert_eq!(
             SageError::protocol("wrong sender").message(),
             "Protocol error: wrong sender"

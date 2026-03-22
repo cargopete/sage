@@ -564,15 +564,17 @@ fn effect_handler_parser(source: Arc<str>) -> impl Parser<Token, TopLevel, Error
                 .repeated()
                 .delimited_by(just(Token::LBrace), just(Token::RBrace)),
         )
-        .map_with_span(move |(((is_pub, name), effect), config), span: Range<usize>| {
-            TopLevel::EffectHandler(EffectHandlerDecl {
-                is_pub: is_pub.is_some(),
-                name,
-                effect,
-                config,
-                span: make_span(&src2, span),
-            })
-        })
+        .map_with_span(
+            move |(((is_pub, name), effect), config), span: Range<usize>| {
+                TopLevel::EffectHandler(EffectHandlerDecl {
+                    is_pub: is_pub.is_some(),
+                    name,
+                    effect,
+                    config,
+                    span: make_span(&src2, span),
+                })
+            },
+        )
 }
 
 /// Parser for literal values only (for handler config).
@@ -583,16 +585,16 @@ fn literal_value_parser(source: Arc<str>) -> impl Parser<Token, Literal, Error =
     filter_map(move |span: Range<usize>, tok| match tok {
         Token::IntLit => {
             let s = &src[span.clone()];
-            let n = s.parse::<i64>().map_err(|_| {
-                Simple::custom(span, format!("invalid integer literal `{s}`"))
-            })?;
+            let n = s
+                .parse::<i64>()
+                .map_err(|_| Simple::custom(span, format!("invalid integer literal `{s}`")))?;
             Ok(Literal::Int(n))
         }
         Token::FloatLit => {
             let s = &src[span.clone()];
-            let n = s.parse::<f64>().map_err(|_| {
-                Simple::custom(span, format!("invalid float literal `{s}`"))
-            })?;
+            let n = s
+                .parse::<f64>()
+                .map_err(|_| Simple::custom(span, format!("invalid float literal `{s}`")))?;
             Ok(Literal::Float(n))
         }
         Token::StringLit => {
@@ -766,11 +768,13 @@ fn supervisor_parser(source: Arc<str>) -> impl Parser<Token, TopLevel, Error = P
         .ignore_then(ident_token_parser(src3.clone()))
         .then_ignore(just(Token::Colon))
         .then(ident_token_parser(src3.clone()))
-        .map_with_span(move |(effect, handler), span: Range<usize>| HandlerAssignment {
-            effect,
-            handler,
-            span: make_span(&src_handler, span),
-        });
+        .map_with_span(
+            move |(effect, handler), span: Range<usize>| HandlerAssignment {
+                effect,
+                handler,
+                span: make_span(&src_handler, span),
+            },
+        );
 
     // Field init for beliefs: name: value
     let field_init = ident_token_parser(src3.clone())
@@ -790,7 +794,11 @@ fn supervisor_parser(source: Arc<str>) -> impl Parser<Token, TopLevel, Error = P
     // Commas between fields are optional for consistent multiline style.
     let child_spec = ident_token_parser(src3.clone())
         .then_ignore(just(Token::LBrace))
-        .then(restart_policy.then_ignore(just(Token::Comma).or_not()).or_not())
+        .then(
+            restart_policy
+                .then_ignore(just(Token::Comma).or_not())
+                .or_not(),
+        )
         .then(
             handler_assignment
                 .then_ignore(just(Token::Comma).or_not())
@@ -816,13 +824,12 @@ fn supervisor_parser(source: Arc<str>) -> impl Parser<Token, TopLevel, Error = P
         });
 
     // Children block: children { child1 child2 ... }
-    let children = just(Token::KwChildren)
-        .ignore_then(
-            child_spec
-                .repeated()
-                .at_least(1)
-                .delimited_by(just(Token::LBrace), just(Token::RBrace)),
-        );
+    let children = just(Token::KwChildren).ignore_then(
+        child_spec
+            .repeated()
+            .at_least(1)
+            .delimited_by(just(Token::LBrace), just(Token::RBrace)),
+    );
 
     // Full supervisor declaration
     just(Token::KwPub)
@@ -898,12 +905,14 @@ fn agent_parser(source: Arc<str>) -> impl Parser<Token, TopLevel, Error = ParseE
         .then(ident_token_parser(src_belief.clone()))
         .then_ignore(just(Token::Colon))
         .then(type_parser(src_belief.clone()))
-        .map_with_span(move |((is_persistent, name), ty), span: Range<usize>| BeliefDecl {
-            is_persistent: is_persistent.unwrap_or(false),
-            name,
-            ty,
-            span: make_span(&src_belief, span),
-        });
+        .map_with_span(
+            move |((is_persistent, name), ty), span: Range<usize>| BeliefDecl {
+                is_persistent: is_persistent.unwrap_or(false),
+                name,
+                ty,
+                span: make_span(&src_belief, span),
+            },
+        );
 
     let handler = just(Token::KwOn)
         .ignore_then(event_kind_parser(src2.clone()))
@@ -2239,19 +2248,31 @@ fn ident_token_parser(source: Arc<str>) -> impl Parser<Token, Ident, Error = Par
 
 /// Parser for identifiers in method/field positions where keywords should also be accepted.
 /// This allows `Shell.run()`, `Fs.read()`, etc. where `run`/`read` might be keywords.
-fn method_name_parser(
-    source: Arc<str>,
-) -> impl Parser<Token, Ident, Error = ParseError> + Clone {
+fn method_name_parser(source: Arc<str>) -> impl Parser<Token, Ident, Error = ParseError> + Clone {
     filter_map(move |span: Range<usize>, token| {
         let text = &source[span.start..span.end];
         match token {
-            Token::Ident | Token::KwRun | Token::KwUse | Token::KwFn
-            | Token::KwReturn | Token::KwFor | Token::KwIn | Token::KwIf | Token::KwElse
-            | Token::KwLet | Token::KwOn | Token::KwAgent | Token::KwSupervisor
-            | Token::KwTool | Token::KwMock | Token::KwStart | Token::KwStop
-            | Token::KwError | Token::KwMatch | Token::KwBreak | Token::KwLoop => {
-                Ok(Ident::new(text.to_string(), make_span(&source, span)))
-            }
+            Token::Ident
+            | Token::KwRun
+            | Token::KwUse
+            | Token::KwFn
+            | Token::KwReturn
+            | Token::KwFor
+            | Token::KwIn
+            | Token::KwIf
+            | Token::KwElse
+            | Token::KwLet
+            | Token::KwOn
+            | Token::KwAgent
+            | Token::KwSupervisor
+            | Token::KwTool
+            | Token::KwMock
+            | Token::KwStart
+            | Token::KwStop
+            | Token::KwError
+            | Token::KwMatch
+            | Token::KwBreak
+            | Token::KwLoop => Ok(Ident::new(text.to_string(), make_span(&source, span))),
             _ => Err(Simple::expected_input_found(
                 span,
                 vec![Some(Token::Ident)],
@@ -5729,13 +5750,22 @@ mod tests {
                 // Should have 2 parts: "result: " and the interpolated expression
                 assert_eq!(template.parts.len(), 2);
                 if let StringPart::Interpolation(call_expr) = &template.parts[1] {
-                    if let Expr::Call { name, type_args, args, .. } = call_expr.as_ref() {
+                    if let Expr::Call {
+                        name,
+                        type_args,
+                        args,
+                        ..
+                    } = call_expr.as_ref()
+                    {
                         assert_eq!(name.name, "identity");
                         assert_eq!(type_args.len(), 1);
                         assert!(matches!(type_args[0], TypeExpr::Int));
                         assert_eq!(args.len(), 1);
                     } else {
-                        panic!("expected Call expression in interpolation, got {:?}", call_expr);
+                        panic!(
+                            "expected Call expression in interpolation, got {:?}",
+                            call_expr
+                        );
                     }
                 } else {
                     panic!("expected Interpolation part in template");
@@ -5891,7 +5921,11 @@ mod tests {
         let prog = prog.expect("should parse");
 
         let handler = &prog.agents[0].handlers[0];
-        if let Stmt::Expr { expr: Expr::Reply { message, .. }, .. } = &handler.body.stmts[0] {
+        if let Stmt::Expr {
+            expr: Expr::Reply { message, .. },
+            ..
+        } = &handler.body.stmts[0]
+        {
             assert!(matches!(message.as_ref(), Expr::RecordConstruct { .. }));
         } else {
             panic!("expected Reply expression, got {:?}", handler.body.stmts[0]);

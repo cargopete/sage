@@ -199,15 +199,19 @@ fn default_entry() -> PathBuf {
 
 impl ProjectManifest {
     /// Load a manifest from a grove.toml file.
-    pub fn load(path: &Path) -> Result<Self, LoadError> {
-        let contents = std::fs::read_to_string(path).map_err(|e| LoadError::IoError {
-            path: path.to_path_buf(),
-            source: e,
+    pub fn load(path: &Path) -> Result<Self, Box<LoadError>> {
+        let contents = std::fs::read_to_string(path).map_err(|e| {
+            Box::new(LoadError::IoError {
+                path: path.to_path_buf(),
+                source: e,
+            })
         })?;
 
-        toml::from_str(&contents).map_err(|e| LoadError::InvalidManifest {
-            path: path.to_path_buf(),
-            source: e,
+        toml::from_str(&contents).map_err(|e| {
+            Box::new(LoadError::InvalidManifest {
+                path: path.to_path_buf(),
+                source: e,
+            })
         })
     }
 
@@ -238,8 +242,9 @@ impl ProjectManifest {
     }
 
     /// Parse the dependencies table into structured specs.
-    pub fn parse_dependencies(&self) -> Result<HashMap<String, DependencySpec>, LoadError> {
-        parse_dependencies(&self.dependencies).map_err(|e| LoadError::PackageError { source: e })
+    pub fn parse_dependencies(&self) -> Result<HashMap<String, DependencySpec>, Box<LoadError>> {
+        parse_dependencies(&self.dependencies)
+            .map_err(|e| Box::new(LoadError::PackageError { source: e }))
     }
 }
 

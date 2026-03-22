@@ -370,8 +370,11 @@ impl Checker {
             }
 
             // Build set of type parameters for this enum
-            let type_param_names: HashSet<String> =
-                enum_decl.type_params.iter().map(|p| p.name.clone()).collect();
+            let type_param_names: HashSet<String> = enum_decl
+                .type_params
+                .iter()
+                .map(|p| p.name.clone())
+                .collect();
 
             let variants: Vec<(String, Option<Type>)> = enum_decl
                 .variants
@@ -387,7 +390,11 @@ impl Checker {
 
             self.symbols.define_enum(EnumInfo {
                 name: enum_decl.name.name.clone(),
-                type_params: enum_decl.type_params.iter().map(|p| p.name.clone()).collect(),
+                type_params: enum_decl
+                    .type_params
+                    .iter()
+                    .map(|p| p.name.clone())
+                    .collect(),
                 variants,
                 is_pub: enum_decl.is_pub,
                 module_path: self.current_module.clone(),
@@ -566,7 +573,9 @@ impl Checker {
                             // If this agent receives this message type in its role
                             if step.receiver == *role && step.message_type.is_compatible_with(&ty) {
                                 // Check if the next step has this agent as sender (reply expected)
-                                if i + 1 < protocol.steps.len() && protocol.steps[i + 1].sender == *role {
+                                if i + 1 < protocol.steps.len()
+                                    && protocol.steps[i + 1].sender == *role
+                                {
                                     self.protocol_reply_required = Some(proto_name.clone());
                                     break;
                                 }
@@ -601,8 +610,10 @@ impl Checker {
             // Phase 3: Check if reply was required but not called
             if let Some(proto) = self.protocol_reply_required.take() {
                 if !self.protocol_reply_called {
-                    self.errors
-                        .push(CheckError::protocol_missing_reply(&proto, &handler.body.span));
+                    self.errors.push(CheckError::protocol_missing_reply(
+                        &proto,
+                        &handler.body.span,
+                    ));
                 }
             }
             self.protocol_reply_called = false;
@@ -689,14 +700,15 @@ impl Checker {
             let provided_beliefs: HashSet<String> =
                 child.beliefs.iter().map(|b| b.name.name.clone()).collect();
 
-            for (belief_name, _belief_ty) in &agent_info.beliefs {
+            for belief_name in agent_info.beliefs.keys() {
                 if !provided_beliefs.contains(belief_name) {
                     // E062: Child missing required belief
-                    self.errors.push(CheckError::supervisor_child_missing_belief(
-                        &child.agent_name.name,
-                        belief_name,
-                        &child.span,
-                    ));
+                    self.errors
+                        .push(CheckError::supervisor_child_missing_belief(
+                            &child.agent_name.name,
+                            belief_name,
+                            &child.span,
+                        ));
                 }
             }
 
@@ -1598,7 +1610,8 @@ impl Checker {
                             return Type::Fn(vec![], Box::new(Type::Unit));
                         }
                         _ => {
-                            self.errors.push(CheckError::unknown_field(&field.name, span));
+                            self.errors
+                                .push(CheckError::unknown_field(&field.name, span));
                             return Type::Error;
                         }
                     }
@@ -2041,12 +2054,10 @@ impl Checker {
                         "Option" if resolved_type_args.len() == 1 => {
                             Type::Option(Box::new(resolved_type_args[0].clone()))
                         }
-                        "Result" if resolved_type_args.len() == 2 => {
-                            Type::Result(
-                                Box::new(resolved_type_args[0].clone()),
-                                Box::new(resolved_type_args[1].clone()),
-                            )
-                        }
+                        "Result" if resolved_type_args.len() == 2 => Type::Result(
+                            Box::new(resolved_type_args[0].clone()),
+                            Box::new(resolved_type_args[1].clone()),
+                        ),
                         _ => Type::Generic(enum_name.name.clone(), resolved_type_args),
                     }
                 }
@@ -2122,7 +2133,8 @@ impl Checker {
             Expr::Reply { message, span } => {
                 // Check that reply is only used inside a message handler
                 if !self.in_message_handler {
-                    self.errors.push(CheckError::reply_outside_message_handler(span));
+                    self.errors
+                        .push(CheckError::reply_outside_message_handler(span));
                 }
 
                 // Phase 3: Mark that reply has been called (for protocol verification)
@@ -2322,8 +2334,14 @@ impl Checker {
             // They share protocols but no step matches this message
             // Report E074 for the first shared protocol
             if let Some(proto_name) = shared_protocols.first() {
-                let sender_role = sender_roles.get(*proto_name).map(String::as_str).unwrap_or("?");
-                let receiver_role = receiver_roles.get(*proto_name).map(String::as_str).unwrap_or("?");
+                let sender_role = sender_roles
+                    .get(*proto_name)
+                    .map(String::as_str)
+                    .unwrap_or("?");
+                let receiver_role = receiver_roles
+                    .get(*proto_name)
+                    .map(String::as_str)
+                    .unwrap_or("?");
                 self.errors.push(CheckError::protocol_message_mismatch(
                     *proto_name,
                     sender_role,
@@ -2352,7 +2370,10 @@ impl Checker {
             } => {
                 // Check that the scrutinee is the correct enum type
                 // Handle built-in Option/Result types specially
-                let (expected_enum, type_bindings): (Option<String>, std::collections::HashMap<String, Type>) = match scrutinee_ty {
+                let (expected_enum, type_bindings): (
+                    Option<String>,
+                    std::collections::HashMap<String, Type>,
+                ) = match scrutinee_ty {
                     Type::Named(name) => (Some(name.clone()), std::collections::HashMap::new()),
                     Type::Option(inner) => {
                         let mut bindings = std::collections::HashMap::new();
@@ -2761,7 +2782,13 @@ impl Checker {
     }
 
     /// Attempt to unify a pattern type with a concrete type, extracting type parameter bindings.
-    fn unify_types(&mut self, pattern: &Type, concrete: &Type, bindings: &mut HashMap<String, Type>) {
+    #[allow(clippy::only_used_in_recursion)]
+    fn unify_types(
+        &mut self,
+        pattern: &Type,
+        concrete: &Type,
+        bindings: &mut HashMap<String, Type>,
+    ) {
         match (pattern, concrete) {
             // Type parameter: bind to concrete type
             (Type::TypeParam(name), concrete) => {
@@ -4115,12 +4142,8 @@ impl Checker {
             "map_err" => {
                 // map_err(Result<T, E>, Fn(E)->F) -> Result<T, F>
                 if args.len() != 2 {
-                    self.errors.push(CheckError::wrong_arg_count(
-                        "map_err",
-                        2,
-                        args.len(),
-                        span,
-                    ));
+                    self.errors
+                        .push(CheckError::wrong_arg_count("map_err", 2, args.len(), span));
                     return Type::Error;
                 }
                 let result_ty = self.check_expr(&args[0]);
@@ -4167,12 +4190,8 @@ impl Checker {
             "ok" => {
                 // ok(Result<T, E>) -> Option<T>
                 if args.len() != 1 {
-                    self.errors.push(CheckError::wrong_arg_count(
-                        "ok",
-                        1,
-                        args.len(),
-                        span,
-                    ));
+                    self.errors
+                        .push(CheckError::wrong_arg_count("ok", 1, args.len(), span));
                     return Type::Error;
                 }
                 let result_ty = self.check_expr(&args[0]);
@@ -4583,8 +4602,11 @@ impl MultiModuleChecker {
             }
 
             // Build set of type parameters for this enum
-            let type_param_names: HashSet<String> =
-                enum_decl.type_params.iter().map(|p| p.name.clone()).collect();
+            let type_param_names: HashSet<String> = enum_decl
+                .type_params
+                .iter()
+                .map(|p| p.name.clone())
+                .collect();
 
             let variants: Vec<(String, Option<Type>)> = enum_decl
                 .variants
@@ -4600,7 +4622,11 @@ impl MultiModuleChecker {
 
             self.symbols.define_enum(EnumInfo {
                 name: enum_decl.name.name.clone(),
-                type_params: enum_decl.type_params.iter().map(|p| p.name.clone()).collect(),
+                type_params: enum_decl
+                    .type_params
+                    .iter()
+                    .map(|p| p.name.clone())
+                    .collect(),
                 variants,
                 is_pub: enum_decl.is_pub,
                 module_path: module_path.clone(),
@@ -5903,7 +5929,8 @@ impl<'a> ModuleChecker<'a> {
                             return Type::Fn(vec![], Box::new(Type::Unit));
                         }
                         _ => {
-                            self.errors.push(CheckError::unknown_field(&field.name, span));
+                            self.errors
+                                .push(CheckError::unknown_field(&field.name, span));
                             return Type::Error;
                         }
                     }
@@ -6346,12 +6373,10 @@ impl<'a> ModuleChecker<'a> {
                         "Option" if resolved_type_args.len() == 1 => {
                             Type::Option(Box::new(resolved_type_args[0].clone()))
                         }
-                        "Result" if resolved_type_args.len() == 2 => {
-                            Type::Result(
-                                Box::new(resolved_type_args[0].clone()),
-                                Box::new(resolved_type_args[1].clone()),
-                            )
-                        }
+                        "Result" if resolved_type_args.len() == 2 => Type::Result(
+                            Box::new(resolved_type_args[0].clone()),
+                            Box::new(resolved_type_args[1].clone()),
+                        ),
                         _ => Type::Generic(enum_name.name.clone(), resolved_type_args),
                     }
                 }
@@ -6507,7 +6532,10 @@ impl<'a> ModuleChecker<'a> {
             } => {
                 // Check that the scrutinee is the correct enum type
                 // Handle built-in Option/Result types specially
-                let (expected_enum, type_bindings): (Option<String>, std::collections::HashMap<String, Type>) = match scrutinee_ty {
+                let (expected_enum, type_bindings): (
+                    Option<String>,
+                    std::collections::HashMap<String, Type>,
+                ) = match scrutinee_ty {
                     Type::Named(name) => (Some(name.clone()), std::collections::HashMap::new()),
                     Type::Option(inner) => {
                         let mut bindings = std::collections::HashMap::new();
@@ -6928,7 +6956,13 @@ impl<'a> ModuleChecker<'a> {
     }
 
     /// Attempt to unify a pattern type with a concrete type, extracting type parameter bindings.
-    fn unify_types(&mut self, pattern: &Type, concrete: &Type, bindings: &mut HashMap<String, Type>) {
+    #[allow(clippy::only_used_in_recursion)]
+    fn unify_types(
+        &mut self,
+        pattern: &Type,
+        concrete: &Type,
+        bindings: &mut HashMap<String, Type>,
+    ) {
         match (pattern, concrete) {
             // Type parameter: bind to concrete type
             (Type::TypeParam(name), concrete) => {
@@ -8280,12 +8314,8 @@ impl<'a> ModuleChecker<'a> {
             "map_err" => {
                 // map_err(Result<T, E>, Fn(E)->F) -> Result<T, F>
                 if args.len() != 2 {
-                    self.errors.push(CheckError::wrong_arg_count(
-                        "map_err",
-                        2,
-                        args.len(),
-                        span,
-                    ));
+                    self.errors
+                        .push(CheckError::wrong_arg_count("map_err", 2, args.len(), span));
                     return Type::Error;
                 }
                 let result_ty = self.check_expr(&args[0]);
@@ -8332,12 +8362,8 @@ impl<'a> ModuleChecker<'a> {
             "ok" => {
                 // ok(Result<T, E>) -> Option<T>
                 if args.len() != 1 {
-                    self.errors.push(CheckError::wrong_arg_count(
-                        "ok",
-                        1,
-                        args.len(),
-                        span,
-                    ));
+                    self.errors
+                        .push(CheckError::wrong_arg_count("ok", 1, args.len(), span));
                     return Type::Error;
                 }
                 let result_ty = self.check_expr(&args[0]);

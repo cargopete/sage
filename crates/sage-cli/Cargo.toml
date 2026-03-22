@@ -11,12 +11,12 @@ name = "sage"
 path = "src/main.rs"
 
 [dependencies]
-sage-parser = { path = "../sage-parser", version = "2.0.1" }
-sage-checker = { path = "../sage-checker", version = "2.0.1" }
-sage-codegen = { path = "../sage-codegen", version = "2.0.1" }
-sage-loader = { path = "../sage-loader", version = "2.0.1" }
-sage-package = { path = "../sage-package", version = "2.0.1" }
-sage-sense = { path = "../sage-sense", version = "2.0.1" }
+sage-parser = { path = "../sage-parser", version = "2.0.2" }
+sage-checker = { path = "../sage-checker", version = "2.0.2" }
+sage-codegen = { path = "../sage-codegen", version = "2.0.2" }
+sage-loader = { path = "../sage-loader", version = "2.0.2" }
+sage-package = { path = "../sage-package", version = "2.0.2" }
+sage-sense = { path = "../sage-sense", version = "2.0.2" }
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 miette = { version = "7", features = ["fancy"] }

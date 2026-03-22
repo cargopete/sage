@@ -653,7 +653,7 @@ fn convert_persistence_config(config: &PersistenceConfig) -> PersistenceBackend 
         "file" => PersistenceBackend::File {
             path: config.path.clone(),
         },
-        "memory" | _ => PersistenceBackend::Memory,
+        _ => PersistenceBackend::Memory,
     }
 }
 
@@ -678,7 +678,9 @@ struct ExternConfig {
 
 /// Load configuration from the project manifest.
 /// Returns defaults if no manifest is found or on error.
-fn load_manifest_configs(path: &Path) -> (PersistenceBackend, SupervisionConfig, ObservabilityConfig) {
+fn load_manifest_configs(
+    path: &Path,
+) -> (PersistenceBackend, SupervisionConfig, ObservabilityConfig) {
     let defaults = (
         PersistenceBackend::Memory,
         SupervisionConfig::default(),
@@ -949,7 +951,10 @@ fn build_file(
     // Use the directory containing grove.toml, falling back to cwd
     let project_root = if path.is_dir() {
         path.to_path_buf()
-    } else if path.parent().map_or(false, |p| p.join("grove.toml").exists() || p.join("sage.toml").exists()) {
+    } else if path
+        .parent()
+        .is_some_and(|p| p.join("grove.toml").exists() || p.join("sage.toml").exists())
+    {
         path.parent().unwrap().to_path_buf()
     } else {
         std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
@@ -1050,13 +1055,15 @@ fn build_file(
                 miette::miette!("Invalid extern module path: {}", module_path.display())
             })?;
             let dest = src_dir.join(filename);
-            std::fs::copy(&abs_path, &dest).into_diagnostic().wrap_err_with(|| {
-                format!(
-                    "Failed to copy extern module {} to {}",
-                    abs_path.display(),
-                    dest.display()
-                )
-            })?;
+            std::fs::copy(&abs_path, &dest)
+                .into_diagnostic()
+                .wrap_err_with(|| {
+                    format!(
+                        "Failed to copy extern module {} to {}",
+                        abs_path.display(),
+                        dest.display()
+                    )
+                })?;
         }
     }
 
@@ -1594,7 +1601,10 @@ fn cmd_clean() -> Result<()> {
     if hearth_path.exists() {
         std::fs::remove_dir_all(hearth_path)
             .map_err(|e| miette::miette!("Failed to remove hearth directory: {}", e))?;
-        println!("{} cleared build artifacts", style(WARD.to_string()).cyan().bold());
+        println!(
+            "{} cleared build artifacts",
+            style(WARD.to_string()).cyan().bold()
+        );
     } else {
         println!("{} nothing to clean", style(WARD.to_string()).cyan().bold());
     }
@@ -1696,7 +1706,7 @@ fn cmd_test(
             t.program
                 .tests
                 .iter()
-                .filter(|test| filter.as_ref().map_or(true, |p| test.name.contains(p)))
+                .filter(|test| filter.as_ref().is_none_or(|p| test.name.contains(p)))
                 .count()
         })
         .sum();
@@ -1753,7 +1763,7 @@ fn cmd_test(
             .program
             .tests
             .iter()
-            .filter(|test| filter.as_ref().map_or(true, |p| test.name.contains(p)))
+            .filter(|test| filter.as_ref().is_none_or(|p| test.name.contains(p)))
             .collect();
 
         if matching_tests.is_empty() {
@@ -2224,14 +2234,14 @@ fn cmd_fmt(paths: &[PathBuf], check: bool) -> Result<()> {
 
     for path in paths {
         if path.is_file() {
-            if path.extension().map_or(false, |e| e == "sg") {
+            if path.extension().is_some_and(|e| e == "sg") {
                 files_to_format.push(path.clone());
             }
         } else if path.is_dir() {
             for entry in WalkDir::new(path)
                 .into_iter()
                 .filter_map(|e| e.ok())
-                .filter(|e| e.path().extension().map_or(false, |ext| ext == "sg"))
+                .filter(|e| e.path().extension().is_some_and(|ext| ext == "sg"))
             {
                 files_to_format.push(entry.path().to_path_buf());
             }
@@ -2356,6 +2366,7 @@ struct TraceEvent {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct TraceError {
     kind: String,
     message: String,
@@ -2464,7 +2475,7 @@ fn cmd_trace_pretty(file: &Path) -> Result<()> {
                 let msg = event.message.as_deref().unwrap_or("");
                 format!("{} {}", style("📝").dim(), msg)
             }
-            _ => format!("{}", event.kind),
+            _ => event.kind.clone(),
         };
 
         println!(

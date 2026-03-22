@@ -688,7 +688,9 @@ pub enum CheckError {
     #[error("message type `{msg_type}` not allowed in protocol `{protocol}` from `{sender}` to `{receiver}`")]
     #[diagnostic(
         code(sage::E074),
-        help("Oswyn explains: check your protocol definition - this message type isn't a valid step")
+        help(
+            "Oswyn explains: check your protocol definition - this message type isn't a valid step"
+        )
     )]
     ProtocolMessageMismatch {
         protocol: String,
@@ -1257,10 +1259,7 @@ impl CheckError {
 
     /// Create a waking without persistent fields warning (W006).
     #[must_use]
-    pub fn waking_without_persistent_fields(
-        agent_name: impl Into<String>,
-        span: &Span,
-    ) -> Self {
+    pub fn waking_without_persistent_fields(agent_name: impl Into<String>, span: &Span) -> Self {
         Self::WakingWithoutPersistentFields {
             agent_name: agent_name.into(),
             span: to_source_span(span),

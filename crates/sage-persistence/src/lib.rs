@@ -24,19 +24,19 @@
 mod error;
 #[cfg(feature = "file")]
 mod file;
-#[cfg(feature = "sqlite")]
-mod sqlite;
 #[cfg(feature = "postgres")]
 mod postgres;
+#[cfg(feature = "sqlite")]
+mod sqlite;
 
 pub use error::{PersistenceError, Result};
 
 #[cfg(feature = "file")]
 pub use file::FileStore;
-#[cfg(feature = "sqlite")]
-pub use sqlite::SqliteStore;
 #[cfg(feature = "postgres")]
 pub use postgres::PostgresStore;
+#[cfg(feature = "sqlite")]
+pub use sqlite::SqliteStore;
 
 use async_trait::async_trait;
 use serde_json::Value;
