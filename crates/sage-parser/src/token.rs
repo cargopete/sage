@@ -230,6 +230,13 @@ pub enum Token {
     KwHandles,
 
     // =========================================================================
+    // Extern (Rust FFI) keywords
+    // =========================================================================
+    /// Extern keyword for Rust FFI function declarations.
+    #[token("extern")]
+    KwExtern,
+
+    // =========================================================================
     // Type keywords
     // =========================================================================
     #[token("Int")]
@@ -476,6 +483,7 @@ impl Token {
                 | Token::KwReply
                 | Token::KwHandler
                 | Token::KwHandles
+                | Token::KwExtern
         )
     }
 
@@ -603,6 +611,7 @@ impl std::fmt::Display for Token {
             Token::KwReply => write!(f, "reply"),
             Token::KwHandler => write!(f, "handler"),
             Token::KwHandles => write!(f, "handles"),
+            Token::KwExtern => write!(f, "extern"),
 
             // Type keywords
             Token::TyInt => write!(f, "Int"),

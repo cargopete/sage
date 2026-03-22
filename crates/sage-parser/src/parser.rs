@@ -4,10 +4,10 @@
 
 use crate::ast::{
     AgentDecl, BeliefDecl, BinOp, Block, ChildSpec, ClosureParam, ConstDecl, EffectHandlerDecl,
-    ElseBranch, EnumDecl, EventKind, Expr, FieldInit, FnDecl, HandlerAssignment, HandlerConfig,
-    HandlerDecl, Literal, MapEntry, MatchArm, MockValue, ModDecl, Param, Pattern, Program,
-    ProtocolDecl, ProtocolRole, ProtocolStep, RecordDecl, RecordField, RestartPolicy, Stmt,
-    StringPart, StringTemplate, SupervisionStrategy, SupervisorDecl, TestDecl, ToolDecl,
+    ElseBranch, EnumDecl, EventKind, Expr, ExternFnDecl, FieldInit, FnDecl, HandlerAssignment,
+    HandlerConfig, HandlerDecl, Literal, MapEntry, MatchArm, MockValue, ModDecl, Param, Pattern,
+    Program, ProtocolDecl, ProtocolRole, ProtocolStep, RecordDecl, RecordField, RestartPolicy,
+    Stmt, StringPart, StringTemplate, SupervisionStrategy, SupervisorDecl, TestDecl, ToolDecl,
     ToolFnDecl, UnaryOp, UseDecl, UseKind,
 };
 use crate::{Ident, Span, TypeExpr};
@@ -64,6 +64,7 @@ fn program_parser(source: Arc<str>) -> impl Parser<Token, Program, Error = Parse
         .or(effect_handler_parser(source.clone()))
         .or(agent_parser(source.clone()))
         .or(supervisor_parser(source.clone()))
+        .or(extern_fn_parser(source.clone()))
         .or(fn_parser(source.clone()))
         .or(test_parser(source.clone()))
         .recover_with(skip_then_retry_until([
@@ -78,6 +79,7 @@ fn program_parser(source: Arc<str>) -> impl Parser<Token, Program, Error = Parse
             Token::KwHandler,
             Token::KwAgent,
             Token::KwSupervisor,
+            Token::KwExtern,
             Token::KwFn,
             Token::KwRun,
             Token::KwTest,
@@ -101,6 +103,7 @@ fn program_parser(source: Arc<str>) -> impl Parser<Token, Program, Error = Parse
             let mut agents = Vec::new();
             let mut supervisors = Vec::new();
             let mut functions = Vec::new();
+            let mut extern_fns = Vec::new();
             let mut tests = Vec::new();
 
             for item in items {
@@ -116,6 +119,7 @@ fn program_parser(source: Arc<str>) -> impl Parser<Token, Program, Error = Parse
                     TopLevel::Agent(a) => agents.push(a),
                     TopLevel::Supervisor(s) => supervisors.push(s),
                     TopLevel::Function(f) => functions.push(f),
+                    TopLevel::ExternFn(e) => extern_fns.push(e),
                     TopLevel::Test(t) => tests.push(t),
                 }
             }
@@ -132,6 +136,7 @@ fn program_parser(source: Arc<str>) -> impl Parser<Token, Program, Error = Parse
                 agents,
                 supervisors,
                 functions,
+                extern_fns,
                 tests,
                 run_agent,
                 span: make_span(&src2, span),
@@ -153,6 +158,7 @@ enum TopLevel {
     Agent(AgentDecl),
     Supervisor(SupervisorDecl),
     Function(FnDecl),
+    ExternFn(ExternFnDecl),
     Test(TestDecl),
 }
 
@@ -998,6 +1004,47 @@ fn event_kind_parser(source: Arc<str>) -> impl Parser<Token, EventKind, Error = 
 // Function parsers
 // =============================================================================
 
+/// Parser for an extern function declaration: `extern fn name(params) -> Type`
+#[allow(clippy::needless_pass_by_value)]
+fn extern_fn_parser(source: Arc<str>) -> impl Parser<Token, TopLevel, Error = ParseError> {
+    let src = source.clone();
+    let src2 = source.clone();
+    let src3 = source.clone();
+
+    let param = ident_token_parser(src.clone())
+        .then_ignore(just(Token::Colon))
+        .then(type_parser(src.clone()))
+        .map_with_span(move |(name, ty), span: Range<usize>| Param {
+            name,
+            ty,
+            span: make_span(&src, span),
+        });
+
+    let params = param
+        .separated_by(just(Token::Comma))
+        .allow_trailing()
+        .delimited_by(just(Token::LParen), just(Token::RParen));
+
+    just(Token::KwExtern)
+        .ignore_then(just(Token::KwFn))
+        .ignore_then(ident_token_parser(src2.clone()))
+        .then(params)
+        .then_ignore(just(Token::Arrow))
+        .then(type_parser(src2.clone()))
+        .then(just(Token::KwFails).or_not())
+        .map_with_span(
+            move |(((name, params), return_ty), is_fallible), span: Range<usize>| {
+                TopLevel::ExternFn(ExternFnDecl {
+                    name,
+                    params,
+                    return_ty,
+                    is_fallible: is_fallible.is_some(),
+                    span: make_span(&src3, span),
+                })
+            },
+        )
+}
+
 /// Parser for a function declaration.
 #[allow(clippy::needless_pass_by_value)]
 fn fn_parser(source: Arc<str>) -> impl Parser<Token, TopLevel, Error = ParseError> {
@@ -1807,8 +1854,8 @@ fn expr_parser(source: Arc<str>) -> BoxedParser<'static, Token, Expr, ParseError
             MethodCall(Ident, Vec<Expr>, Range<usize>), // method name, args, span of closing paren
         }
 
-        // Parse method call: .ident(args)
-        let method_call = ident_token_parser(src.clone())
+        // Parse method call: .ident(args) — uses method_name_parser to allow keywords as method names
+        let method_call = method_name_parser(src.clone())
             .then(
                 expr.clone()
                     .separated_by(just(Token::Comma))
@@ -1839,7 +1886,7 @@ fn expr_parser(source: Arc<str>) -> BoxedParser<'static, Token, Expr, ParseError
             })
             // Try method call first, then field access
             .or(method_call)
-            .or(ident_token_parser(src.clone()).map(PostfixOp::Field)),
+            .or(method_name_parser(src.clone()).map(PostfixOp::Field)),
         );
 
         let postfix = atom
@@ -2180,6 +2227,30 @@ fn ident_token_parser(source: Arc<str>) -> impl Parser<Token, Ident, Error = Par
             vec![Some(Token::Ident)],
             Some(token),
         )),
+    })
+}
+
+/// Parser for identifiers in method/field positions where keywords should also be accepted.
+/// This allows `Shell.run()`, `Fs.read()`, etc. where `run`/`read` might be keywords.
+fn method_name_parser(
+    source: Arc<str>,
+) -> impl Parser<Token, Ident, Error = ParseError> + Clone {
+    filter_map(move |span: Range<usize>, token| {
+        let text = &source[span.start..span.end];
+        match token {
+            Token::Ident | Token::KwRun | Token::KwUse | Token::KwFn
+            | Token::KwReturn | Token::KwFor | Token::KwIn | Token::KwIf | Token::KwElse
+            | Token::KwLet | Token::KwOn | Token::KwAgent | Token::KwSupervisor
+            | Token::KwTool | Token::KwMock | Token::KwStart | Token::KwStop
+            | Token::KwError | Token::KwMatch | Token::KwBreak | Token::KwLoop => {
+                Ok(Ident::new(text.to_string(), make_span(&source, span)))
+            }
+            _ => Err(Simple::expected_input_found(
+                span,
+                vec![Some(Token::Ident)],
+                Some(token),
+            )),
+        }
     })
 }
 

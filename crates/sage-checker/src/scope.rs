@@ -2129,6 +2129,38 @@ impl SymbolTable {
         );
     }
 
+    /// Register extern function declarations as built-in functions.
+    ///
+    /// Extern fns have a Sage type signature but no body — the implementation
+    /// is provided by external Rust code.  We resolve each parameter and return
+    /// type from their AST `TypeExpr` and insert them into the builtins table
+    /// so they are callable with full type checking.
+    pub fn register_extern_fns(&mut self, extern_fns: &[sage_parser::ExternFnDecl]) {
+        for ext_fn in extern_fns {
+            let params: Vec<Type> = ext_fn
+                .params
+                .iter()
+                .map(|p| resolve_type(&p.ty))
+                .collect();
+            let return_type = resolve_type(&ext_fn.return_ty);
+
+            // BuiltinInfo requires &'static str — leak the heap String so it
+            // lives for the duration of the process.  This is the same pattern
+            // used for all other builtins whose names are string literals.
+            let name: &'static str = ext_fn.name.name.clone().leak();
+
+            self.builtins.insert(
+                name,
+                BuiltinInfo {
+                    name,
+                    params: Some(params),
+                    return_type,
+                    is_fallible: ext_fn.is_fallible,
+                },
+            );
+        }
+    }
+
     /// Define an agent.
     pub fn define_agent(&mut self, info: AgentInfo) {
         self.agents.insert(info.name.clone(), info);

@@ -666,6 +666,16 @@ fn convert_observability_config(config: &LoaderObservabilityConfig) -> Observabi
     }
 }
 
+/// Extern Rust interop configuration from grove.toml [extern] section.
+#[derive(Debug, Default)]
+struct ExternConfig {
+    /// Extra Cargo dependencies to add to generated project.
+    /// Each entry is (name, value) where value is the raw TOML string.
+    dependencies: Vec<(String, String)>,
+    /// Paths to Rust source modules to copy into the generated project.
+    modules: Vec<PathBuf>,
+}
+
 /// Load configuration from the project manifest.
 /// Returns defaults if no manifest is found or on error.
 fn load_manifest_configs(path: &Path) -> (PersistenceBackend, SupervisionConfig, ObservabilityConfig) {
@@ -715,6 +725,106 @@ fn load_manifest_configs(path: &Path) -> (PersistenceBackend, SupervisionConfig,
             convert_observability_config(&manifest.observability),
         ),
         Err(_) => defaults,
+    }
+}
+
+/// Load extern Rust interop configuration from grove.toml [extern] section.
+/// Returns default (empty) config if no manifest or no [extern] section is found.
+fn load_extern_config(path: &Path) -> ExternConfig {
+    // Find the grove.toml manifest (same logic as load_manifest_configs)
+    let manifest_path = if path.is_file() && path.ends_with("grove.toml") {
+        path.to_path_buf()
+    } else if path.is_dir() {
+        let grove_path = path.join("grove.toml");
+        let sage_path = path.join("sage.toml");
+        if grove_path.exists() {
+            grove_path
+        } else if sage_path.exists() {
+            sage_path
+        } else {
+            return ExternConfig::default();
+        }
+    } else if path.is_file() {
+        if let Some(parent) = path.parent() {
+            let grove_path = parent.join("grove.toml");
+            let sage_path = parent.join("sage.toml");
+            if grove_path.exists() {
+                grove_path
+            } else if sage_path.exists() {
+                sage_path
+            } else {
+                // Fallback: check cwd (entry file may be in a subdirectory)
+                let cwd_grove = PathBuf::from("grove.toml");
+                let cwd_sage = PathBuf::from("sage.toml");
+                if cwd_grove.exists() {
+                    cwd_grove
+                } else if cwd_sage.exists() {
+                    cwd_sage
+                } else {
+                    return ExternConfig::default();
+                }
+            }
+        } else {
+            return ExternConfig::default();
+        }
+    } else {
+        return ExternConfig::default();
+    };
+
+    let contents = match std::fs::read_to_string(&manifest_path) {
+        Ok(c) => c,
+        Err(_) => return ExternConfig::default(),
+    };
+
+    let doc = match contents.parse::<toml_edit::DocumentMut>() {
+        Ok(d) => d,
+        Err(_) => return ExternConfig::default(),
+    };
+
+    let extern_table = match doc.get("extern") {
+        Some(item) => match item.as_table() {
+            Some(t) => t,
+            None => return ExternConfig::default(),
+        },
+        None => return ExternConfig::default(),
+    };
+
+    // Parse [extern].modules as an array of strings
+    let modules = extern_table
+        .get("modules")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(PathBuf::from))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    // Parse [extern.dependencies] as key-value pairs
+    let dependencies = extern_table
+        .get("dependencies")
+        .and_then(|v| v.as_table())
+        .map(|deps| {
+            deps.iter()
+                .map(|(name, value)| {
+                    let toml_value = match value.as_str() {
+                        // Simple string version: ratatui = "0.29"
+                        Some(s) => format!("\"{}\"", s),
+                        None => {
+                            // Inline table or other complex value -- render as TOML
+                            // toml_edit's Display gives us the right format
+                            value.to_string()
+                        }
+                    };
+                    (name.to_string(), toml_value)
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    ExternConfig {
+        dependencies,
+        modules,
     }
 }
 
@@ -833,6 +943,17 @@ fn build_file(
 
     // Load configuration from manifest
     let (persistence, supervision, observability) = load_manifest_configs(path);
+    let extern_config = load_extern_config(path);
+
+    // Determine project root for resolving relative paths (extern modules etc.)
+    // Use the directory containing grove.toml, falling back to cwd
+    let project_root = if path.is_dir() {
+        path.to_path_buf()
+    } else if path.parent().map_or(false, |p| p.join("grove.toml").exists() || p.join("sage.toml").exists()) {
+        path.parent().unwrap().to_path_buf()
+    } else {
+        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+    };
 
     // Use path dependency if we're in the sage repo (crates/sage-runtime exists)
     let runtime_dep = if std::env::current_dir()
@@ -896,9 +1017,47 @@ fn build_file(
     // Write Cargo.toml only for cargo mode
     if !use_toolchain {
         let cargo_toml_path = project_dir.join("Cargo.toml");
-        std::fs::write(&cargo_toml_path, &generated.cargo_toml)
-            .into_diagnostic()
-            .wrap_err("Failed to write Cargo.toml")?;
+
+        // If we have extern dependencies, inject them before [workspace]
+        if !extern_config.dependencies.is_empty() {
+            let mut cargo_toml_content = generated.cargo_toml.clone();
+            let extra_deps: String = extern_config
+                .dependencies
+                .iter()
+                .map(|(name, value)| format!("{} = {}\n", name, value))
+                .collect();
+            if let Some(pos) = cargo_toml_content.find("\n[workspace]") {
+                cargo_toml_content.insert_str(pos + 1, &extra_deps);
+            }
+            std::fs::write(&cargo_toml_path, &cargo_toml_content)
+                .into_diagnostic()
+                .wrap_err("Failed to write Cargo.toml with extern deps")?;
+        } else {
+            std::fs::write(&cargo_toml_path, &generated.cargo_toml)
+                .into_diagnostic()
+                .wrap_err("Failed to write Cargo.toml")?;
+        }
+
+        // Copy extern Rust modules into generated project's src/
+        let src_dir = project_dir.join("src");
+        for module_path in &extern_config.modules {
+            let abs_path = if module_path.is_absolute() {
+                module_path.clone()
+            } else {
+                project_root.join(module_path)
+            };
+            let filename = module_path.file_name().ok_or_else(|| {
+                miette::miette!("Invalid extern module path: {}", module_path.display())
+            })?;
+            let dest = src_dir.join(filename);
+            std::fs::copy(&abs_path, &dest).into_diagnostic().wrap_err_with(|| {
+                format!(
+                    "Failed to copy extern module {} to {}",
+                    abs_path.display(),
+                    dest.display()
+                )
+            })?;
+        }
     }
 
     if emit_rust_only {

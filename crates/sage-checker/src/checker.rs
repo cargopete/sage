@@ -232,6 +232,9 @@ impl Checker {
     // =========================================================================
 
     fn collect_declarations(&mut self, program: &Program) {
+        // Register extern fns as builtins (no body to check later)
+        self.symbols.register_extern_fns(&program.extern_fns);
+
         // Collect agents
         for agent in &program.agents {
             if self.symbols.has_agent(&agent.name.name) {
@@ -4441,6 +4444,9 @@ impl MultiModuleChecker {
     }
 
     fn collect_module_declarations(&mut self, module_path: &ModulePath, program: &Program) {
+        // Register extern fns as builtins (no body to check later)
+        self.symbols.register_extern_fns(&program.extern_fns);
+
         // Collect agents
         for agent in &program.agents {
             let full_name = Self::make_qualified_name(module_path, &agent.name.name);

@@ -35,6 +35,8 @@ pub struct Program {
     pub supervisors: Vec<SupervisorDecl>,
     /// Function declarations.
     pub functions: Vec<FnDecl>,
+    /// Extern function declarations (Rust FFI).
+    pub extern_fns: Vec<ExternFnDecl>,
     /// Test declarations (RFC-0012). Only valid in `_test.sg` files.
     pub tests: Vec<TestDecl>,
     /// The entry-point agent or supervisor (from `run Name`).
@@ -307,6 +309,22 @@ pub struct FnDecl {
     pub is_fallible: bool,
     /// The function body.
     pub body: Block,
+    /// Span covering the entire declaration.
+    pub span: Span,
+}
+
+/// An extern function declaration: `extern fn name(params) -> Type`
+/// The implementation is provided by external Rust code.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExternFnDecl {
+    /// The function's name.
+    pub name: Ident,
+    /// The function's parameters.
+    pub params: Vec<Param>,
+    /// The return type.
+    pub return_ty: TypeExpr,
+    /// Whether this function can fail (marked with `fails`).
+    pub is_fallible: bool,
     /// Span covering the entire declaration.
     pub span: Span,
 }

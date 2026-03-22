@@ -797,6 +797,33 @@ SAGE_TRACE_FILE=trace.log sage run myprogram.sg  # Output to file
 
 Trace events are emitted as newline-delimited JSON (NDJSON).
 
+### Extern Functions (Rust FFI)
+
+Sage can call Rust functions directly via `extern fn` declarations:
+
+```sage
+// Declare extern functions (implemented in src/sage_extern.rs)
+extern fn now_iso() -> String
+extern fn prompt(msg: String) -> String fails
+
+// Use them like any other function
+let time = now_iso();
+let input = try prompt("Enter name:");
+```
+
+**grove.toml:**
+```toml
+[extern]
+modules = ["src/sage_extern.rs"]
+
+[extern.dependencies]
+chrono = "0.4"
+```
+
+Extern functions are compiled as a Rust module (`sage_extern`) and linked with the generated code. Additional Cargo dependencies go under `[extern.dependencies]`.
+
+Functions marked `fails` return `Result<T, String>` on the Rust side and require `try`/`catch` in Sage.
+
 ### Semicolons
 
 Following Rust conventions:
@@ -992,6 +1019,7 @@ sage/
 | [sagelang/sage-vscode](https://github.com/sagelang/sage-vscode) | VS Code extension |
 | [sagelang/sage-zed](https://github.com/sagelang/sage-zed) | Zed extension |
 | [sagelang/tree-sitter-sage](https://github.com/sagelang/tree-sitter-sage) | Tree-sitter grammar |
+| [sagelang/ward](https://github.com/sagelang/ward) | Ward — interactive coding agent |
 
 ## License
 
