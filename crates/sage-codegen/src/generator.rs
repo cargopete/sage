@@ -236,6 +236,8 @@ struct Generator {
     current_protocol_roles: std::collections::HashMap<String, String>,
     /// v2.0: Current agent's @persistent belief field names (for checkpoint())
     current_agent_persistent_beliefs: Vec<String>,
+    /// Agent tool uses (agent_name -> list of tool names) for summon generation
+    agent_tool_uses: std::collections::HashMap<String, Vec<String>>,
     /// Extern function names (for sage_extern:: dispatch)
     extern_fn_names: std::collections::HashSet<String>,
     /// Subset of extern fns that are fallible (marked with `fails`)
@@ -252,6 +254,7 @@ impl Generator {
             agents_with_message_handlers: std::collections::HashMap::new(),
             current_protocol_roles: std::collections::HashMap::new(),
             current_agent_persistent_beliefs: Vec::new(),
+            agent_tool_uses: std::collections::HashMap::new(),
             extern_fn_names: std::collections::HashSet::new(),
             extern_fn_fallible: std::collections::HashSet::new(),
         }
@@ -1261,6 +1264,12 @@ serde_json = "1"
             self.agents_with_error_handlers.insert(name.clone());
         }
 
+        // Track tool uses for summon generation
+        if !agent.tool_uses.is_empty() {
+            let tool_names: Vec<String> = agent.tool_uses.iter().map(|t| t.name.clone()).collect();
+            self.agent_tool_uses.insert(name.clone(), tool_names);
+        }
+
         // Track message handlers
         let message_handlers: Vec<_> = agent
             .handlers
@@ -1622,7 +1631,7 @@ serde_json = "1"
         self.emit.writeln("");
 
         self.emit
-            .writeln("let handle = sage_runtime::spawn(|mut ctx| async move {");
+            .writeln("let handle = sage_runtime::spawn(move |mut ctx| async move {");
         self.emit.indent();
 
         // RFC-0011: Initialize async tools (like Database) before agent construction
@@ -2023,9 +2032,9 @@ serde_json = "1"
                 self.emit.write(&Self::to_snake_case(handler_name));
                 self.emit.writeln("::CONFIG.max_tokens);");
                 self.emit.dedent();
-                self.emit.writeln("let handle = sage_runtime::spawn_with_llm_config(|mut ctx| async move {");
+                self.emit.writeln("let handle = sage_runtime::spawn_with_llm_config(move |mut ctx| async move {");
             } else {
-                self.emit.writeln("let handle = sage_runtime::spawn(|mut ctx| async move {");
+                self.emit.writeln("let handle = sage_runtime::spawn(move |mut ctx| async move {");
             }
             self.emit.indent();
 
@@ -3633,12 +3642,23 @@ serde_json = "1"
             Expr::Summon { agent, fields, .. } => {
                 let has_error_handler = self.agents_with_error_handlers.contains(&agent.name);
                 let message_handlers = self.agents_with_message_handlers.get(&agent.name).cloned();
+                let tool_uses = self.agent_tool_uses.get(&agent.name).cloned().unwrap_or_default();
+
+                // Wrap in a block so we can emit clone bindings before the spawn
+                self.emit.write("{ ");
+                // Pre-clone field values to avoid capturing self/moving loop vars
+                for (i, field) in fields.iter().enumerate() {
+                    self.emit.write(&format!("let __sf{} = (", i));
+                    self.generate_expr(&field.value);
+                    self.emit.write(").clone(); ");
+                }
 
                 self.emit
-                    .write("sage_runtime::spawn(|mut ctx| async move { ");
+                    .write("sage_runtime::spawn(move |mut ctx| async move { ");
                 self.emit.write("let agent = ");
                 self.emit.write(&agent.name);
-                if fields.is_empty() {
+                // Always use struct literal syntax when there are fields or tool uses
+                if fields.is_empty() && tool_uses.is_empty() {
                     self.emit.write("; ");
                 } else {
                     self.emit.write(" { ");
@@ -3647,8 +3667,21 @@ serde_json = "1"
                             self.emit.write(", ");
                         }
                         self.emit.write(&field.name.name);
+                        self.emit.write(&format!(": __sf{}", i));
+                    }
+                    // Add tool fields automatically
+                    for tool_name in &tool_uses {
+                        if !fields.is_empty() || tool_uses.iter().position(|t| t == tool_name) != Some(0) {
+                            self.emit.write(", ");
+                        }
+                        self.emit.write(&tool_name.to_lowercase());
                         self.emit.write(": ");
-                        self.generate_expr(&field.value);
+                        if tool_name == "Database" {
+                            self.emit.write("DatabaseClient::from_env().await.expect(\"Failed to connect to database\")");
+                        } else {
+                            self.emit.write(&tool_name);
+                            self.emit.write("Client::from_env()");
+                        }
                     }
                     self.emit.write(" }; ");
                 }
@@ -3691,7 +3724,7 @@ serde_json = "1"
                     self.emit.write("Err(_) => break } } } "); // close match receive, loop, if
                 }
 
-                self.emit.write("result })");
+                self.emit.write("result }) }");
             }
 
             Expr::Await {
@@ -4032,7 +4065,10 @@ serde_json = "1"
                     if i > 0 {
                         self.emit.write(", ");
                     }
+                    // Clone arguments to avoid move-out-of-self issues
+                    self.emit.write("(");
                     self.generate_expr(arg);
+                    self.emit.write(").clone()");
                 }
                 self.emit.write(").await");
             }
