@@ -961,7 +961,7 @@ sage check my_project/
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `SAGE_API_KEY.*divine` |
+| `SAGE_API_KEY` | API key for LLM provider (required for `divine`) | — |
 | `SAGE_LLM_URL` | Base URL for OpenAI-compatible API | `https://api.openai.com/v1` |
 | `SAGE_MODEL` | Model to use | `gpt-4o-mini` |
 | `SAGE_INFER_RETRIES` | Max retries for structured inference | `3` |
@@ -1022,6 +1022,8 @@ sage/
 | [sagelang/sage-zed](https://github.com/sagelang/sage-zed) | Zed extension |
 | [sagelang/tree-sitter-sage](https://github.com/sagelang/tree-sitter-sage) | Tree-sitter grammar |
 | [sagelang/ward](https://github.com/sagelang/ward) | Ward — interactive coding agent |
+| [sagelang/walter-sg](https://github.com/sagelang/walter-sg) | Walter — Victorian Discord bot |
+| [sagelang/sagentic-debate](https://github.com/sagelang/sagentic-debate) | Multi-agent debate showcase |
 
 ## License
 
