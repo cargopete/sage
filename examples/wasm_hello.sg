@@ -1,0 +1,16 @@
+// WASM Hello World — a Sage agent that runs in the browser
+// Build with: sage build examples/wasm_hello.sg --target web
+// Then serve hearth/wasm_hello/pkg/ and open playground.html
+
+agent Main {
+    on start {
+        print("Hello from Sage in the browser!");
+
+        let greeting = "Sage agents run natively in WebAssembly";
+        print(greeting);
+
+        yield(42);
+    }
+}
+
+run Main;

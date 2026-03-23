@@ -160,6 +160,7 @@ impl SageError {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl From<tokio::task::JoinError> for SageError {
     fn from(e: tokio::task::JoinError) -> Self {
         SageError::JoinError(e.to_string())

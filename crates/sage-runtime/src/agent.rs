@@ -5,22 +5,60 @@ use crate::llm::LlmClient;
 use crate::session::{ProtocolViolation, SenderHandle, SessionId, SharedSessionRegistry};
 use std::future::Future;
 use tokio::sync::{mpsc, oneshot};
+
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::task::JoinHandle;
+
+// ---------------------------------------------------------------------------
+// AgentHandle — platform-specific inner field
+// ---------------------------------------------------------------------------
 
 /// Handle to a spawned agent.
 ///
 /// This is returned by `spawn()` and can be awaited to get the agent's result.
+#[cfg(not(target_arch = "wasm32"))]
 pub struct AgentHandle<T> {
     join: JoinHandle<SageResult<T>>,
     message_tx: mpsc::Sender<Message>,
 }
 
+/// Handle to a spawned agent (WASM variant).
+///
+/// Uses a oneshot channel instead of `JoinHandle` since `spawn_local`
+/// does not return a handle.
+#[cfg(target_arch = "wasm32")]
+pub struct AgentHandle<T> {
+    result_rx: oneshot::Receiver<SageResult<T>>,
+    message_tx: mpsc::Sender<Message>,
+}
+
+// ---------------------------------------------------------------------------
+// AgentHandle::result() — platform-specific
+// ---------------------------------------------------------------------------
+
+#[cfg(not(target_arch = "wasm32"))]
 impl<T> AgentHandle<T> {
     /// Wait for the agent to complete and return its result.
     pub async fn result(self) -> SageResult<T> {
         self.join.await?
     }
+}
 
+#[cfg(target_arch = "wasm32")]
+impl<T> AgentHandle<T> {
+    /// Wait for the agent to complete and return its result.
+    pub async fn result(self) -> SageResult<T> {
+        self.result_rx
+            .await
+            .map_err(|_| SageError::Agent("Agent task dropped".to_string()))?
+    }
+}
+
+// ---------------------------------------------------------------------------
+// AgentHandle — shared methods (both platforms)
+// ---------------------------------------------------------------------------
+
+impl<T> AgentHandle<T> {
     /// Send a message to the agent.
     ///
     /// The message will be serialized to JSON and placed in the agent's mailbox.
@@ -201,6 +239,7 @@ impl<T> AgentContext<T> {
     /// Receive a message with a timeout.
     ///
     /// Returns `None` if the timeout expires before a message arrives.
+    #[cfg(not(target_arch = "wasm32"))]
     pub async fn receive_timeout<M>(
         &mut self,
         timeout: std::time::Duration,
@@ -219,6 +258,37 @@ impl<T> AgentContext<T> {
             }
             Ok(None) => Err(SageError::Agent("Message channel closed".to_string())),
             Err(_) => Ok(None), // Timeout
+        }
+    }
+
+    /// Receive a message with a timeout (WASM variant).
+    ///
+    /// Uses browser `setTimeout` for the timeout mechanism.
+    #[cfg(target_arch = "wasm32")]
+    pub async fn receive_timeout<M>(
+        &mut self,
+        timeout: std::time::Duration,
+    ) -> SageResult<Option<M>>
+    where
+        M: serde::de::DeserializeOwned,
+    {
+        use futures::future::{select, Either};
+        use std::pin::pin;
+
+        let recv_fut = pin!(self.message_rx.recv());
+        let sleep_fut = pin!(sage_runtime_web::sleep(timeout));
+
+        match select(recv_fut, sleep_fut).await {
+            Either::Left((Some(msg), _)) => {
+                self.current_message = Some(msg.clone());
+                let value = serde_json::from_value(msg.payload)
+                    .map_err(|e| SageError::Agent(format!("Failed to deserialize message: {e}")))?;
+                Ok(Some(value))
+            }
+            Either::Left((None, _)) => {
+                Err(SageError::Agent("Message channel closed".to_string()))
+            }
+            Either::Right((_, _)) => Ok(None), // Timeout
         }
     }
 
@@ -275,21 +345,6 @@ impl<T> AgentContext<T> {
     }
 
     /// Phase 3: Reply to the current message with protocol state validation.
-    ///
-    /// This validates that the reply is allowed by the protocol state machine,
-    /// transitions the state, and then sends the reply.
-    ///
-    /// # Arguments
-    /// * `msg` - The message to send back
-    /// * `msg_type` - The type name of the message for protocol validation
-    /// * `role` - The role this agent plays in the protocol
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - Called outside a message handler
-    /// - The current message has no sender handle
-    /// - The protocol state doesn't allow this reply
     pub async fn reply_with_protocol<M: serde::Serialize>(
         &mut self,
         msg: M,
@@ -328,17 +383,6 @@ impl<T> AgentContext<T> {
     }
 
     /// Phase 3: Validate incoming message against protocol state.
-    ///
-    /// Call this after receiving a message to validate it against the
-    /// protocol state machine and transition to the next state.
-    ///
-    /// # Arguments
-    /// * `msg_type` - The type name of the received message
-    /// * `role` - The role this agent plays in the protocol
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the message violates the protocol.
     pub async fn validate_protocol_receive(
         &mut self,
         msg_type: &str,
@@ -377,17 +421,6 @@ impl<T> AgentContext<T> {
     }
 
     /// Phase 3: Start a new protocol session.
-    ///
-    /// Call this when initiating a protocol exchange with another agent.
-    ///
-    /// # Arguments
-    /// * `protocol` - The protocol name
-    /// * `role` - The role this agent plays
-    /// * `state` - The initial state machine for this protocol
-    /// * `partner` - Handle to send messages to the partner
-    ///
-    /// # Returns
-    /// The session ID for tracking this protocol session.
     pub async fn start_session(
         &self,
         protocol: String,
@@ -408,9 +441,14 @@ impl<T> AgentContext<T> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// spawn — native (tokio::spawn, requires Send)
+// ---------------------------------------------------------------------------
+
 /// Spawn an agent and return a handle to it.
 ///
 /// The agent will run asynchronously in a separate task.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn spawn<A, T, F>(agent: A) -> AgentHandle<T>
 where
     A: FnOnce(AgentContext<T>) -> F + Send + 'static,
@@ -423,6 +461,7 @@ where
 /// Spawn an agent with a custom LLM configuration.
 ///
 /// This is used by effect handlers to configure per-agent LLM settings.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn spawn_with_llm_config<A, T, F>(agent: A, llm_config: crate::llm::LlmConfig) -> AgentHandle<T>
 where
     A: FnOnce(AgentContext<T>) -> F + Send + 'static,
@@ -443,6 +482,51 @@ where
     drop(result_rx);
 
     AgentHandle { join, message_tx }
+}
+
+// ---------------------------------------------------------------------------
+// spawn — WASM (spawn_local, no Send bounds)
+// ---------------------------------------------------------------------------
+
+/// Spawn an agent and return a handle to it.
+///
+/// On WASM, agents run on the browser's single-threaded event loop
+/// via `spawn_local`. No `Send` bounds are required.
+#[cfg(target_arch = "wasm32")]
+pub fn spawn<A, T, F>(agent: A) -> AgentHandle<T>
+where
+    A: FnOnce(AgentContext<T>) -> F + 'static,
+    F: Future<Output = SageResult<T>> + 'static,
+    T: 'static,
+{
+    spawn_with_llm_config(agent, crate::llm::LlmConfig::from_env())
+}
+
+/// Spawn an agent with a custom LLM configuration (WASM variant).
+#[cfg(target_arch = "wasm32")]
+pub fn spawn_with_llm_config<A, T, F>(agent: A, llm_config: crate::llm::LlmConfig) -> AgentHandle<T>
+where
+    A: FnOnce(AgentContext<T>) -> F + 'static,
+    F: Future<Output = SageResult<T>> + 'static,
+    T: 'static,
+{
+    let (task_result_tx, task_result_rx) = oneshot::channel();
+    let (emit_tx, _emit_rx) = oneshot::channel();
+    let (message_tx, message_rx) = mpsc::channel(32);
+
+    let llm = LlmClient::new(llm_config);
+    let session_registry = crate::session::shared_registry();
+    let ctx = AgentContext::new(llm, emit_tx, message_rx, session_registry);
+
+    wasm_bindgen_futures::spawn_local(async move {
+        let result = agent(ctx).await;
+        let _ = task_result_tx.send(result);
+    });
+
+    AgentHandle {
+        result_rx: task_result_rx,
+        message_tx,
+    }
 }
 
 #[cfg(test)]

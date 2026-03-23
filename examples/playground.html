@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sage Playground</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Menlo', 'Consolas', 'Monaco', monospace;
+            background: #1a1a2e;
+            color: #e0e0e0;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        header {
+            background: #16213e;
+            padding: 1rem 2rem;
+            border-bottom: 1px solid #0f3460;
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+        header h1 {
+            color: #53d8fb;
+            font-size: 1.4rem;
+            font-weight: 600;
+        }
+        header span {
+            color: #888;
+            font-size: 0.85rem;
+        }
+        .controls {
+            margin-left: auto;
+            display: flex;
+            gap: 0.5rem;
+        }
+        button {
+            background: #0f3460;
+            color: #53d8fb;
+            border: 1px solid #53d8fb;
+            padding: 0.4rem 1rem;
+            font-family: inherit;
+            font-size: 0.85rem;
+            cursor: pointer;
+            border-radius: 4px;
+            transition: background 0.15s;
+        }
+        button:hover { background: #1a4a7a; }
+        button:disabled { opacity: 0.4; cursor: not-allowed; }
+        .main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            padding: 1rem 2rem;
+            gap: 1rem;
+        }
+        .config-bar {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+        }
+        .config-bar label { color: #888; font-size: 0.8rem; }
+        .config-bar input {
+            background: #16213e;
+            border: 1px solid #0f3460;
+            color: #e0e0e0;
+            padding: 0.3rem 0.6rem;
+            font-family: inherit;
+            font-size: 0.8rem;
+            border-radius: 4px;
+            flex: 1;
+        }
+        #console {
+            flex: 1;
+            background: #0d1117;
+            border: 1px solid #0f3460;
+            border-radius: 6px;
+            padding: 1rem;
+            overflow-y: auto;
+            min-height: 300px;
+            font-size: 0.85rem;
+            line-height: 1.6;
+        }
+        .log { color: #8b949e; }
+        .log.info { color: #53d8fb; }
+        .log.warn { color: #f0c040; }
+        .log.error { color: #f85149; }
+        .log.system { color: #7c3aed; }
+        .log .ts { color: #484f58; margin-right: 0.5rem; }
+        footer {
+            padding: 0.5rem 2rem;
+            text-align: center;
+            color: #484f58;
+            font-size: 0.75rem;
+            border-top: 1px solid #0f3460;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Sage Playground</h1>
+        <span>WebAssembly Agent Runtime</span>
+        <div class="controls">
+            <button id="btn-run" onclick="runAgent()">Run Agent</button>
+            <button id="btn-clear" onclick="clearConsole()">Clear</button>
+        </div>
+    </header>
+
+    <div class="main">
+        <div class="config-bar">
+            <label>LLM Endpoint:</label>
+            <input id="llm-url" type="text" placeholder="https://your-proxy.example.com/v1" />
+            <label>Model:</label>
+            <input id="llm-model" type="text" value="gpt-4o" style="max-width:150px" />
+        </div>
+        <div id="console"></div>
+    </div>
+
+    <footer>
+        Sage &mdash; A language for building intelligent agents
+    </footer>
+
+    <script type="module">
+        // --- Console UI ---
+        const el = document.getElementById('console');
+
+        function timestamp() {
+            return new Date().toISOString().slice(11, 23);
+        }
+
+        function appendLog(msg, level = 'info') {
+            const div = document.createElement('div');
+            div.className = `log ${level}`;
+            div.innerHTML = `<span class="ts">[${timestamp()}]</span>${escapeHtml(msg)}`;
+            el.appendChild(div);
+            el.scrollTop = el.scrollHeight;
+        }
+
+        function escapeHtml(s) {
+            return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        }
+
+        window.clearConsole = () => { el.innerHTML = ''; };
+
+        // --- Intercept console.log/warn/error from WASM ---
+        const origLog = console.log;
+        const origWarn = console.warn;
+        const origError = console.error;
+
+        console.log = (...args) => {
+            origLog(...args);
+            appendLog(args.map(String).join(' '), 'info');
+        };
+        console.warn = (...args) => {
+            origWarn(...args);
+            appendLog(args.map(String).join(' '), 'warn');
+        };
+        console.error = (...args) => {
+            origError(...args);
+            appendLog(args.map(String).join(' '), 'error');
+        };
+
+        // --- WASM Loading ---
+        // Adjust this path to point at your built pkg/ directory.
+        // After `sage build your_agent.sg --target web`, the output is in:
+        //   hearth/<agent_name>/pkg/<agent_name>.js
+        //
+        // For local dev, serve the repo root: python3 -m http.server 8080
+        // Then set WASM_MODULE below to the correct path.
+
+        const WASM_MODULE = './hearth/wasm_hello/pkg/wasm_hello.js';
+        let wasmModule = null;
+
+        async function loadWasm() {
+            appendLog('Loading WASM module...', 'system');
+            try {
+                wasmModule = await import(WASM_MODULE);
+                await wasmModule.default();
+                appendLog('WASM module loaded successfully', 'system');
+            } catch (e) {
+                appendLog(`Failed to load WASM: ${e.message}`, 'error');
+                appendLog('Build first: sage build examples/wasm_hello.sg --target web', 'system');
+            }
+        }
+
+        window.runAgent = async () => {
+            const btn = document.getElementById('btn-run');
+            btn.disabled = true;
+
+            try {
+                // Configure LLM endpoint if provided
+                const url = document.getElementById('llm-url').value.trim();
+                const model = document.getElementById('llm-model').value.trim();
+                if (url && wasmModule?.sage_configure) {
+                    wasmModule.sage_configure(url, model, '');
+                    appendLog(`LLM configured: ${model} @ ${url}`, 'system');
+                }
+
+                if (!wasmModule) {
+                    await loadWasm();
+                } else {
+                    // Re-init triggers wasm_bindgen(start) again
+                    appendLog('Re-running agent...', 'system');
+                    await wasmModule.default();
+                }
+            } catch (e) {
+                appendLog(`Error: ${e.message}`, 'error');
+            } finally {
+                btn.disabled = false;
+            }
+        };
+
+        // Auto-load on page open
+        loadWasm();
+    </script>
+</body>
+</html>

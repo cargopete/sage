@@ -31,7 +31,8 @@ pub struct LlmConfig {
 }
 
 impl LlmConfig {
-    /// Create a config from environment variables.
+    /// Create a config from environment variables (native) or WASM config injection (browser).
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn from_env() -> Self {
         Self {
             api_key: std::env::var("SAGE_API_KEY").unwrap_or_default(),
@@ -48,6 +49,20 @@ impl LlmConfig {
             max_tokens: std::env::var("SAGE_MAX_TOKENS")
                 .ok()
                 .and_then(|s| s.parse().ok()),
+        }
+    }
+
+    /// Create a config from WASM config injection (set via `sage_configure()` from JS).
+    #[cfg(target_arch = "wasm32")]
+    pub fn from_env() -> Self {
+        let wasm_config = sage_runtime_web::get_llm_config();
+        Self {
+            api_key: wasm_config.api_key,
+            base_url: wasm_config.base_url,
+            model: wasm_config.model,
+            infer_retries: DEFAULT_INFER_RETRIES,
+            temperature: None,
+            max_tokens: None,
         }
     }
 

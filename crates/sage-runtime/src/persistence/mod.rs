@@ -14,19 +14,22 @@
 //!
 //! Without any persistence feature, only `MemoryCheckpointStore` is available.
 
-// Sync adapters for async persistence backends
-#[cfg(any(
-    feature = "persistence-sqlite",
-    feature = "persistence-postgres",
-    feature = "persistence-file"
+// Sync adapters for async persistence backends (native only)
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    any(
+        feature = "persistence-sqlite",
+        feature = "persistence-postgres",
+        feature = "persistence-file"
+    )
 ))]
 mod backends;
 
-#[cfg(feature = "persistence-file")]
+#[cfg(all(not(target_arch = "wasm32"), feature = "persistence-file"))]
 pub use backends::SyncFileStore;
-#[cfg(feature = "persistence-postgres")]
+#[cfg(all(not(target_arch = "wasm32"), feature = "persistence-postgres"))]
 pub use backends::SyncPostgresStore;
-#[cfg(feature = "persistence-sqlite")]
+#[cfg(all(not(target_arch = "wasm32"), feature = "persistence-sqlite"))]
 pub use backends::SyncSqliteStore;
 
 use serde::{de::DeserializeOwned, Serialize};

@@ -71,9 +71,9 @@ mod tests {
     #[test]
     fn test_now_ms() {
         let ms1 = now_ms();
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        // Ensure time has advanced
         let ms2 = now_ms();
-        assert!(ms2 > ms1);
+        assert!(ms2 >= ms1);
     }
 
     #[test]

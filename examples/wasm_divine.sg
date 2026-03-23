@@ -1,0 +1,21 @@
+// WASM LLM Agent — a Sage agent that calls an LLM from the browser
+// Build with: sage build examples/wasm_divine.sg --target web
+//
+// Requires configuring the LLM endpoint from JavaScript:
+//   sage_configure("https://your-proxy.example.com/v1", "gpt-4o", "");
+
+agent Main {
+    on start {
+        print("Asking the oracle...");
+        let answer = try divine("What is the meaning of life? Reply in one sentence.");
+        print("Oracle says: " ++ answer);
+        yield(answer);
+    }
+
+    on error(e) {
+        print("The oracle is silent today.");
+        yield("error");
+    }
+}
+
+run Main;

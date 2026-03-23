@@ -14,30 +14,9 @@
 //! - **Permanent**: Always restart, regardless of exit reason
 //! - **Transient**: Restart only on abnormal termination (error)
 //! - **Temporary**: Never restart
-//!
-//! # Example
-//!
-//! ```ignore
-//! use sage_runtime::supervisor::{Supervisor, Strategy, RestartPolicy};
-//!
-//! let mut supervisor = Supervisor::new(Strategy::OneForOne, Default::default());
-//!
-//! supervisor.add_child("Worker", RestartPolicy::Permanent, || {
-//!     sage_runtime::spawn(|mut ctx| async move {
-//!         // Agent logic
-//!         ctx.emit(())
-//!     })
-//! });
-//!
-//! supervisor.run().await?;
-//! ```
 
 use crate::error::{SageError, SageResult};
-use std::collections::VecDeque;
-use std::future::Future;
-use std::pin::Pin;
-use std::time::{Duration, Instant};
-use tokio::task::JoinHandle;
+use std::time::Duration;
 
 /// Supervision strategy (OTP-inspired).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -81,272 +60,341 @@ impl Default for RestartConfig {
     }
 }
 
-/// Tracks restart history for circuit breaker functionality.
-struct RestartTracker {
-    timestamps: VecDeque<Instant>,
-    config: RestartConfig,
-}
+// ===========================================================================
+// Native implementation — uses tokio::spawn and JoinHandle
+// ===========================================================================
 
-impl RestartTracker {
-    fn new(config: RestartConfig) -> Self {
-        Self {
-            timestamps: VecDeque::new(),
-            config,
-        }
+#[cfg(not(target_arch = "wasm32"))]
+mod native {
+    use super::*;
+    use std::collections::VecDeque;
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::time::Instant;
+    use tokio::task::JoinHandle;
+
+    /// Tracks restart history for circuit breaker functionality.
+    struct RestartTracker {
+        timestamps: VecDeque<Instant>,
+        config: RestartConfig,
     }
 
-    /// Record a restart and check if we've exceeded the limit.
-    /// Returns true if we should allow the restart, false if circuit breaker trips.
-    fn record_restart(&mut self) -> bool {
-        let now = Instant::now();
-
-        // Remove old timestamps outside the window
-        while let Some(&oldest) = self.timestamps.front() {
-            if now.duration_since(oldest) > self.config.within {
-                self.timestamps.pop_front();
-            } else {
-                break;
+    impl RestartTracker {
+        fn new(config: RestartConfig) -> Self {
+            Self {
+                timestamps: VecDeque::new(),
+                config,
             }
         }
 
-        // Check if we're at the limit
-        if self.timestamps.len() >= self.config.max_restarts as usize {
-            return false; // Circuit breaker trips
-        }
+        /// Record a restart and check if we've exceeded the limit.
+        /// Returns true if we should allow the restart, false if circuit breaker trips.
+        fn record_restart(&mut self) -> bool {
+            let now = Instant::now();
 
-        self.timestamps.push_back(now);
-        true
-    }
-}
+            // Remove old timestamps outside the window
+            while let Some(&oldest) = self.timestamps.front() {
+                if now.duration_since(oldest) > self.config.within {
+                    self.timestamps.pop_front();
+                } else {
+                    break;
+                }
+            }
 
-/// A spawn function that creates an agent and returns its join handle.
-pub type SpawnFn = Box<dyn Fn() -> Pin<Box<dyn Future<Output = SageResult<()>> + Send>> + Send>;
+            // Check if we're at the limit
+            if self.timestamps.len() >= self.config.max_restarts as usize {
+                return false; // Circuit breaker trips
+            }
 
-/// Handle to a supervised child.
-struct ChildHandle {
-    name: String,
-    restart_policy: RestartPolicy,
-    spawn_fn: SpawnFn,
-    handle: Option<JoinHandle<SageResult<()>>>,
-}
-
-impl ChildHandle {
-    fn new(name: String, restart_policy: RestartPolicy, spawn_fn: SpawnFn) -> Self {
-        Self {
-            name,
-            restart_policy,
-            spawn_fn,
-            handle: None,
+            self.timestamps.push_back(now);
+            true
         }
     }
 
-    /// Spawn (or respawn) this child.
-    fn spawn(&mut self) {
-        let future = (self.spawn_fn)();
-        self.handle = Some(tokio::spawn(future));
-    }
+    /// A spawn function that creates an agent and returns its join handle.
+    pub type SpawnFn = Box<dyn Fn() -> Pin<Box<dyn Future<Output = SageResult<()>> + Send>> + Send>;
 
-    /// Check if the child is running.
-    fn is_running(&self) -> bool {
-        self.handle
-            .as_ref()
-            .map(|h| !h.is_finished())
-            .unwrap_or(false)
-    }
-
-    /// Take the join handle (for awaiting).
-    fn take_handle(&mut self) -> Option<JoinHandle<SageResult<()>>> {
-        self.handle.take()
-    }
-}
-
-/// A supervisor that manages child agents with restart strategies.
-pub struct Supervisor {
-    strategy: Strategy,
-    children: Vec<ChildHandle>,
-    restart_tracker: RestartTracker,
-}
-
-impl Supervisor {
-    /// Create a new supervisor with the given strategy and restart configuration.
-    pub fn new(strategy: Strategy, config: RestartConfig) -> Self {
-        Self {
-            strategy,
-            children: Vec::new(),
-            restart_tracker: RestartTracker::new(config),
-        }
-    }
-
-    /// Add a child to the supervisor.
-    ///
-    /// The spawn function should create the agent and return its future.
-    pub fn add_child<F, Fut>(
-        &mut self,
-        name: impl Into<String>,
+    /// Handle to a supervised child.
+    struct ChildHandle {
+        name: String,
         restart_policy: RestartPolicy,
-        spawn_fn: F,
-    ) where
-        F: Fn() -> Fut + Send + 'static,
-        Fut: Future<Output = SageResult<()>> + Send + 'static,
-    {
-        let spawn_fn: SpawnFn = Box::new(move || Box::pin(spawn_fn()));
-        self.children
-            .push(ChildHandle::new(name.into(), restart_policy, spawn_fn));
+        spawn_fn: SpawnFn,
+        handle: Option<JoinHandle<SageResult<()>>>,
     }
 
-    /// Start all children and begin supervision.
-    ///
-    /// This method runs until all children have terminated (according to their
-    /// restart policies) or the circuit breaker trips.
-    pub async fn run(&mut self) -> SageResult<()> {
-        // Start all children
-        for child in &mut self.children {
-            child.spawn();
+    impl ChildHandle {
+        fn new(name: String, restart_policy: RestartPolicy, spawn_fn: SpawnFn) -> Self {
+            Self {
+                name,
+                restart_policy,
+                spawn_fn,
+                handle: None,
+            }
         }
 
-        // Monitor loop
-        loop {
-            // Wait for any child to complete
-            let (index, result) = self.wait_for_child_exit().await;
+        /// Spawn (or respawn) this child.
+        fn spawn(&mut self) {
+            let future = (self.spawn_fn)();
+            self.handle = Some(tokio::spawn(future));
+        }
 
-            // Check if all children are done
-            if index.is_none() {
-                // All children have finished
-                break;
+        /// Check if the child is running.
+        fn is_running(&self) -> bool {
+            self.handle
+                .as_ref()
+                .map(|h| !h.is_finished())
+                .unwrap_or(false)
+        }
+
+        /// Take the join handle (for awaiting).
+        fn take_handle(&mut self) -> Option<JoinHandle<SageResult<()>>> {
+            self.handle.take()
+        }
+    }
+
+    /// A supervisor that manages child agents with restart strategies.
+    pub struct Supervisor {
+        strategy: Strategy,
+        children: Vec<ChildHandle>,
+        restart_tracker: RestartTracker,
+    }
+
+    impl Supervisor {
+        /// Create a new supervisor with the given strategy and restart configuration.
+        pub fn new(strategy: Strategy, config: RestartConfig) -> Self {
+            Self {
+                strategy,
+                children: Vec::new(),
+                restart_tracker: RestartTracker::new(config),
+            }
+        }
+
+        /// Add a child to the supervisor.
+        ///
+        /// The spawn function should create the agent and return its future.
+        pub fn add_child<F, Fut>(
+            &mut self,
+            name: impl Into<String>,
+            restart_policy: RestartPolicy,
+            spawn_fn: F,
+        ) where
+            F: Fn() -> Fut + Send + 'static,
+            Fut: Future<Output = SageResult<()>> + Send + 'static,
+        {
+            let spawn_fn: SpawnFn = Box::new(move || Box::pin(spawn_fn()));
+            self.children
+                .push(ChildHandle::new(name.into(), restart_policy, spawn_fn));
+        }
+
+        /// Start all children and begin supervision.
+        ///
+        /// This method runs until all children have terminated (according to their
+        /// restart policies) or the circuit breaker trips.
+        pub async fn run(&mut self) -> SageResult<()> {
+            // Start all children
+            for child in &mut self.children {
+                child.spawn();
             }
 
-            let index = index.unwrap();
-            let child_name = self.children[index].name.clone();
-            let restart_policy = self.children[index].restart_policy;
+            // Monitor loop
+            loop {
+                // Wait for any child to complete
+                let (index, result) = self.wait_for_child_exit().await;
 
-            // Determine if we should restart
-            let should_restart = match (restart_policy, &result) {
-                (RestartPolicy::Permanent, _) => true,
-                (RestartPolicy::Transient, Err(_)) => true,
-                (RestartPolicy::Transient, Ok(_)) => false,
-                (RestartPolicy::Temporary, _) => false,
-            };
-
-            if should_restart {
-                // Check circuit breaker
-                if !self.restart_tracker.record_restart() {
-                    return Err(SageError::Supervisor(format!(
-                        "Maximum restart intensity reached for supervisor (child '{}' failed too many times)",
-                        child_name
-                    )));
+                // Check if all children are done
+                if index.is_none() {
+                    // All children have finished
+                    break;
                 }
 
-                // Apply restart strategy
-                match self.strategy {
-                    Strategy::OneForOne => {
-                        self.restart_child(index);
+                let index = index.unwrap();
+                let child_name = self.children[index].name.clone();
+                let restart_policy = self.children[index].restart_policy;
+
+                // Determine if we should restart
+                let should_restart = match (restart_policy, &result) {
+                    (RestartPolicy::Permanent, _) => true,
+                    (RestartPolicy::Transient, Err(_)) => true,
+                    (RestartPolicy::Transient, Ok(_)) => false,
+                    (RestartPolicy::Temporary, _) => false,
+                };
+
+                if should_restart {
+                    // Check circuit breaker
+                    if !self.restart_tracker.record_restart() {
+                        return Err(SageError::Supervisor(format!(
+                            "Maximum restart intensity reached for supervisor (child '{}' failed too many times)",
+                            child_name
+                        )));
                     }
-                    Strategy::OneForAll => {
-                        self.restart_all();
+
+                    // Apply restart strategy
+                    match self.strategy {
+                        Strategy::OneForOne => {
+                            self.restart_child(index);
+                        }
+                        Strategy::OneForAll => {
+                            self.restart_all();
+                        }
+                        Strategy::RestForOne => {
+                            self.restart_rest(index);
+                        }
                     }
-                    Strategy::RestForOne => {
-                        self.restart_rest(index);
+                }
+
+                // Check if any children are still running
+                if !self.any_running() {
+                    break;
+                }
+            }
+
+            Ok(())
+        }
+
+        /// Wait for any child to exit, returning the index and result.
+        async fn wait_for_child_exit(&mut self) -> (Option<usize>, SageResult<()>) {
+            use futures::future::select_all;
+
+            // Collect all running children's handles with their indices
+            let handles_with_indices: Vec<(usize, JoinHandle<SageResult<()>>)> = self
+                .children
+                .iter_mut()
+                .enumerate()
+                .filter_map(|(i, c)| c.take_handle().map(|h| (i, h)))
+                .collect();
+
+            if handles_with_indices.is_empty() {
+                return (None, Ok(()));
+            }
+
+            // We need to track indices separately since select_all works on the handles
+            let indices: Vec<usize> = handles_with_indices.iter().map(|(i, _)| *i).collect();
+            let handles: Vec<JoinHandle<SageResult<()>>> =
+                handles_with_indices.into_iter().map(|(_, h)| h).collect();
+
+            // Wait for any handle to complete
+            let (join_result, completed_idx, remaining_handles) = select_all(handles).await;
+
+            // Get the original child index
+            let child_index = indices[completed_idx];
+
+            // Convert JoinError to SageError
+            let final_result =
+                join_result.unwrap_or_else(|e| Err(SageError::Agent(e.to_string())));
+
+            // Put back the remaining handles to their respective children
+            let mut remaining_iter = remaining_handles.into_iter();
+            for (pos, &original_idx) in indices.iter().enumerate() {
+                if pos != completed_idx {
+                    if let (Some(handle), Some(child)) =
+                        (remaining_iter.next(), self.children.get_mut(original_idx))
+                    {
+                        child.handle = Some(handle);
                     }
                 }
             }
 
-            // Check if any children are still running
-            if !self.any_running() {
-                break;
+            (Some(child_index), final_result)
+        }
+
+        /// Restart a single child.
+        fn restart_child(&mut self, index: usize) {
+            if let Some(child) = self.children.get_mut(index) {
+                child.spawn();
             }
         }
 
-        Ok(())
-    }
-
-    /// Wait for any child to exit, returning the index and result.
-    async fn wait_for_child_exit(&mut self) -> (Option<usize>, SageResult<()>) {
-        use futures::future::select_all;
-
-        // Collect all running children's handles with their indices
-        let handles_with_indices: Vec<(usize, JoinHandle<SageResult<()>>)> = self
-            .children
-            .iter_mut()
-            .enumerate()
-            .filter_map(|(i, c)| c.take_handle().map(|h| (i, h)))
-            .collect();
-
-        if handles_with_indices.is_empty() {
-            return (None, Ok(()));
-        }
-
-        // We need to track indices separately since select_all works on the handles
-        let indices: Vec<usize> = handles_with_indices.iter().map(|(i, _)| *i).collect();
-        let handles: Vec<JoinHandle<SageResult<()>>> =
-            handles_with_indices.into_iter().map(|(_, h)| h).collect();
-
-        // Wait for any handle to complete
-        let (join_result, completed_idx, remaining_handles) = select_all(handles).await;
-
-        // Get the original child index
-        let child_index = indices[completed_idx];
-
-        // Convert JoinError to SageError
-        let final_result = join_result.unwrap_or_else(|e| Err(SageError::Agent(e.to_string())));
-
-        // Put back the remaining handles to their respective children
-        // Build list of (handle, original_index) pairs for non-completed handles
-        let mut remaining_iter = remaining_handles.into_iter();
-        for (pos, &original_idx) in indices.iter().enumerate() {
-            if pos != completed_idx {
-                if let (Some(handle), Some(child)) =
-                    (remaining_iter.next(), self.children.get_mut(original_idx))
-                {
-                    child.handle = Some(handle);
+        /// Restart all children (stop all first, then start all).
+        fn restart_all(&mut self) {
+            // Abort all running children
+            for child in &mut self.children {
+                if let Some(handle) = child.take_handle() {
+                    handle.abort();
                 }
             }
-        }
 
-        (Some(child_index), final_result)
-    }
-
-    /// Restart a single child.
-    fn restart_child(&mut self, index: usize) {
-        if let Some(child) = self.children.get_mut(index) {
-            child.spawn();
-        }
-    }
-
-    /// Restart all children (stop all first, then start all).
-    fn restart_all(&mut self) {
-        // Abort all running children
-        for child in &mut self.children {
-            if let Some(handle) = child.take_handle() {
-                handle.abort();
+            // Start all children
+            for child in &mut self.children {
+                child.spawn();
             }
         }
 
-        // Start all children
-        for child in &mut self.children {
-            child.spawn();
-        }
-    }
+        /// Restart the failed child and all children started after it.
+        fn restart_rest(&mut self, from_index: usize) {
+            // Abort children from index onwards
+            for child in self.children.iter_mut().skip(from_index) {
+                if let Some(handle) = child.take_handle() {
+                    handle.abort();
+                }
+            }
 
-    /// Restart the failed child and all children started after it.
-    fn restart_rest(&mut self, from_index: usize) {
-        // Abort children from index onwards
-        for child in self.children.iter_mut().skip(from_index) {
-            if let Some(handle) = child.take_handle() {
-                handle.abort();
+            // Restart children from index onwards
+            for child in self.children.iter_mut().skip(from_index) {
+                child.spawn();
             }
         }
 
-        // Restart children from index onwards
-        for child in self.children.iter_mut().skip(from_index) {
-            child.spawn();
+        /// Check if any children are still running.
+        fn any_running(&self) -> bool {
+            self.children.iter().any(|c| c.is_running())
         }
-    }
-
-    /// Check if any children are still running.
-    fn any_running(&self) -> bool {
-        self.children.iter().any(|c| c.is_running())
     }
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+pub use native::{SpawnFn, Supervisor};
+
+// ===========================================================================
+// WASM stub — supervision not yet supported in the browser
+// ===========================================================================
+
+#[cfg(target_arch = "wasm32")]
+mod wasm_stub {
+    use super::*;
+    use std::future::Future;
+
+    /// A supervisor that manages child agents with restart strategies.
+    ///
+    /// **WASM note:** Supervision is not yet supported in the browser target.
+    /// This is a stub that will return an error if `run()` is called.
+    pub struct Supervisor {
+        _strategy: Strategy,
+    }
+
+    impl Supervisor {
+        /// Create a new supervisor.
+        pub fn new(strategy: Strategy, _config: RestartConfig) -> Self {
+            Self {
+                _strategy: strategy,
+            }
+        }
+
+        /// Add a child to the supervisor (no-op on WASM).
+        pub fn add_child<F, Fut>(
+            &mut self,
+            _name: impl Into<String>,
+            _restart_policy: RestartPolicy,
+            _spawn_fn: F,
+        ) where
+            F: Fn() -> Fut + 'static,
+            Fut: Future<Output = SageResult<()>> + 'static,
+        {
+            // No-op — children are not tracked on WASM
+        }
+
+        /// Run the supervisor.
+        ///
+        /// Returns an error on WASM as supervision is not yet supported.
+        pub async fn run(&mut self) -> SageResult<()> {
+            Err(SageError::Supervisor(
+                "Supervision trees are not yet supported in the WASM target".to_string(),
+            ))
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub use wasm_stub::Supervisor;
 
 #[cfg(test)]
 mod tests {

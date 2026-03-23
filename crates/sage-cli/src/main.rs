@@ -7,7 +7,7 @@ use miette::{Diagnostic, IntoDiagnostic, Result, Severity, WrapErr};
 use sage_checker::{check_module_tree, Checker};
 use sage_codegen::{
     generate_module_tree_with_full_config, generate_test_program_with_config, CodegenConfig,
-    ObservabilityConfig, PersistenceBackend, RuntimeDep,
+    CodegenTarget, ObservabilityConfig, PersistenceBackend, RuntimeDep,
 };
 use sage_loader::{
     discover_test_files, load_project, load_project_with_packages, load_test_files, ModuleTree,
@@ -79,7 +79,7 @@ enum Commands {
         trace_file: Option<PathBuf>,
     },
 
-    /// Compile a Sage program to a native binary
+    /// Compile a Sage program to a native binary (or WASM with --target web)
     Build {
         /// Path to the .sg file (defaults to entry in grove.toml or src/main.sg)
         file: Option<PathBuf>,
@@ -95,6 +95,10 @@ enum Commands {
         /// Only generate Rust code, don't compile
         #[arg(long)]
         emit_rust: bool,
+
+        /// Target platform: "native" (default) or "web" (WASM)
+        #[arg(long, default_value = "native")]
+        target: String,
     },
 
     /// Check a Sage program for errors without running it
@@ -286,9 +290,20 @@ fn main() -> Result<()> {
             release,
             output,
             emit_rust,
+            target,
         } => {
             let resolved_file = resolve_entry_file(file)?;
-            build_file(&resolved_file, release, &output, emit_rust, false)?;
+            let codegen_target = match target.as_str() {
+                "web" | "wasm" => CodegenTarget::Wasm,
+                "native" => CodegenTarget::Native,
+                other => {
+                    return Err(miette::miette!(
+                        "Unknown target '{}'. Valid targets: native, web",
+                        other
+                    ))
+                }
+            };
+            build_file(&resolved_file, release, &output, emit_rust, false, codegen_target)?;
             Ok(())
         }
         Commands::Check { file } => {
@@ -403,7 +418,7 @@ fn run_file(
 ) -> Result<()> {
     // Build the program
     let output_dir = PathBuf::from("hearth");
-    let binary_path = build_file(path, release, &output_dir, false, quiet)?;
+    let binary_path = build_file(path, release, &output_dir, false, quiet, CodegenTarget::Native)?;
 
     let binary_path = binary_path.ok_or_else(|| miette::miette!("Build did not produce binary"))?;
 
@@ -641,6 +656,106 @@ fn compile_with_cargo(project_dir: &PathBuf, release: bool) -> Result<()> {
     Ok(())
 }
 
+/// Compile a WASM project: cargo build → wasm-bindgen → (optional) wasm-opt.
+fn compile_wasm(project_dir: &PathBuf, project_name: &str, release: bool) -> Result<()> {
+    // Step 1: Check for wasm32 target
+    let rustup_check = Command::new("rustup")
+        .args(["target", "list", "--installed"])
+        .output()
+        .into_diagnostic()
+        .wrap_err("Failed to run rustup")?;
+    let installed_targets = String::from_utf8_lossy(&rustup_check.stdout);
+    if !installed_targets.contains("wasm32-unknown-unknown") {
+        miette::bail!(
+            "wasm32-unknown-unknown target not installed.\n\
+             Run: rustup target add wasm32-unknown-unknown"
+        );
+    }
+
+    // Step 2: cargo build --target wasm32-unknown-unknown
+    let mut cargo_args = vec!["build", "--target", "wasm32-unknown-unknown", "--quiet"];
+    let profile = if release {
+        cargo_args.push("--profile");
+        cargo_args.push("wasm-release");
+        "wasm-release"
+    } else {
+        "debug"
+    };
+
+    let status = Command::new("cargo")
+        .args(&cargo_args)
+        .current_dir(project_dir)
+        .status()
+        .into_diagnostic()
+        .wrap_err("Failed to run cargo build for WASM target")?;
+
+    if !status.success() {
+        miette::bail!("WASM cargo build failed");
+    }
+
+    // Step 3: wasm-bindgen post-processing
+    let wasm_file = project_dir
+        .join("target")
+        .join("wasm32-unknown-unknown")
+        .join(profile)
+        .join(format!("{}.wasm", project_name));
+
+    if !wasm_file.exists() {
+        miette::bail!(
+            "WASM output not found at {}. Build may have failed.",
+            wasm_file.display()
+        );
+    }
+
+    let pkg_dir = project_dir.join("pkg");
+    std::fs::create_dir_all(&pkg_dir)
+        .into_diagnostic()
+        .wrap_err("Failed to create pkg directory")?;
+
+    let bindgen_status = Command::new("wasm-bindgen")
+        .args([
+            "--out-dir",
+            pkg_dir.to_str().unwrap(),
+            "--target",
+            "web",
+            "--no-typescript",
+            wasm_file.to_str().unwrap(),
+        ])
+        .status();
+
+    match bindgen_status {
+        Ok(s) if s.success() => {}
+        Ok(_) => miette::bail!("wasm-bindgen failed. Check your WASM build output."),
+        Err(_) => {
+            miette::bail!(
+                "wasm-bindgen-cli not found.\n\
+                 Run: cargo install wasm-bindgen-cli"
+            );
+        }
+    }
+
+    // Step 4: wasm-opt (optional, best-effort)
+    if release {
+        let wasm_bg = pkg_dir.join(format!("{}_bg.wasm", project_name));
+        if wasm_bg.exists() {
+            let opt_result = Command::new("wasm-opt")
+                .args(["-Oz", "-o"])
+                .arg(&wasm_bg)
+                .arg(&wasm_bg)
+                .status();
+
+            if let Err(_) = opt_result {
+                eprintln!(
+                    "  {} wasm-opt not found, skipping optimization. Install: brew install binaryen",
+                    style("⚠").yellow()
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Convert manifest persistence config to codegen's PersistenceBackend.
 fn convert_persistence_config(config: &PersistenceConfig) -> PersistenceBackend {
     match config.backend.as_str() {
@@ -830,14 +945,15 @@ fn load_extern_config(path: &Path) -> ExternConfig {
     }
 }
 
-/// Build a Sage program or project to a native binary.
-/// Returns the path to the binary if compilation succeeded.
+/// Build a Sage program or project to a native binary (or WASM with CodegenTarget::Wasm).
+/// Returns the path to the binary/pkg if compilation succeeded.
 fn build_file(
     path: &PathBuf,
     release: bool,
     output_dir: &PathBuf,
     emit_rust_only: bool,
     quiet: bool,
+    target: CodegenTarget,
 ) -> Result<Option<PathBuf>> {
     let start_time = Instant::now();
 
@@ -982,13 +1098,16 @@ fn build_file(
         persistence,
         supervision,
         observability,
+        target: target.clone(),
     };
 
     // Generate Rust code from module tree with full config
     let generated = generate_module_tree_with_full_config(&module_tree, &project_name, config);
 
-    // Determine compilation mode
-    let toolchain = find_toolchain();
+    let is_wasm = target == CodegenTarget::Wasm;
+
+    // Determine compilation mode (WASM always uses cargo)
+    let toolchain = if is_wasm { None } else { find_toolchain() };
     let use_toolchain = toolchain.is_some();
 
     // Create output directory
@@ -997,9 +1116,15 @@ fn build_file(
         .into_diagnostic()
         .wrap_err("Failed to create output directory")?;
 
-    // For toolchain mode, just write main.rs directly
-    // For cargo mode, write main.rs in src/ and Cargo.toml
-    let (main_rs_path, binary_path) = if use_toolchain {
+    // For WASM, write lib.rs; for native toolchain mode, main.rs in project root;
+    // for native cargo mode, main.rs in src/
+    let (source_path, binary_path) = if is_wasm {
+        let src_dir = project_dir.join("src");
+        std::fs::create_dir_all(&src_dir).into_diagnostic()?;
+        let lib_rs = src_dir.join("lib.rs");
+        let pkg_dir = project_dir.join("pkg");
+        (lib_rs, pkg_dir)
+    } else if use_toolchain {
         let main_rs = project_dir.join("main.rs");
         let binary = project_dir.join(&project_name);
         (main_rs, binary)
@@ -1015,11 +1140,11 @@ fn build_file(
         (main_rs, binary)
     };
 
-    std::fs::write(&main_rs_path, &generated.main_rs)
+    std::fs::write(&source_path, &generated.main_rs)
         .into_diagnostic()
-        .wrap_err("Failed to write main.rs")?;
+        .wrap_err("Failed to write generated source")?;
 
-    // Write Cargo.toml only for cargo mode
+    // Write Cargo.toml for cargo/WASM mode (not toolchain mode)
     if !use_toolchain {
         let cargo_toml_path = project_dir.join("Cargo.toml");
 
@@ -1074,7 +1199,7 @@ fn build_file(
         println!(
             "  {} Generated {}",
             CHECK,
-            style(main_rs_path.display()).dim()
+            style(source_path.display()).dim()
         );
         println!();
         println!(
@@ -1091,8 +1216,10 @@ fn build_file(
     }
 
     // Compile
-    if let Some(ref tc) = toolchain {
-        compile_with_toolchain(tc, &main_rs_path, &binary_path, release)?;
+    if is_wasm {
+        compile_wasm(&project_dir, &project_name, release)?;
+    } else if let Some(ref tc) = toolchain {
+        compile_with_toolchain(tc, &source_path, &binary_path, release)?;
     } else {
         compile_with_cargo(&project_dir, release)?;
     }
@@ -1104,7 +1231,13 @@ fn build_file(
     let total_duration = start_time.elapsed();
 
     if !quiet {
-        let mode = if use_toolchain { "" } else { " (cargo)" };
+        let mode = if is_wasm {
+            " (wasm)"
+        } else if use_toolchain {
+            ""
+        } else {
+            " (cargo)"
+        };
         println!(
             "{}{} compiled {}{} in {:.2}s",
             SPARKLES,

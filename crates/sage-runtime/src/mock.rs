@@ -14,25 +14,24 @@ use std::future::Future;
 use std::sync::{Arc, Mutex};
 
 // Task-local storage for the mock tool registry.
-// This allows tests to intercept tool calls without threading the registry through all code.
+// On native: tokio::task_local for per-task isolation.
+// On WASM: thread_local since the browser is single-threaded.
+
+#[cfg(not(target_arch = "wasm32"))]
 tokio::task_local! {
     static MOCK_TOOL_REGISTRY: RefCell<Option<MockToolRegistry>>;
+}
+
+#[cfg(target_arch = "wasm32")]
+thread_local! {
+    static MOCK_TOOL_REGISTRY: RefCell<Option<MockToolRegistry>> = const { RefCell::new(None) };
 }
 
 /// Run a future with a mock tool registry in scope.
 ///
 /// All tool calls made during the execution of the future will check
 /// the registry for mocks before making real calls.
-///
-/// # Example
-/// ```ignore
-/// let registry = MockToolRegistry::new();
-/// registry.register("Http", "get", MockResponse::string("{\"status\": 200}"));
-///
-/// with_mock_tools(registry, async {
-///     // Http.get() calls here will return the mock response
-/// }).await;
-/// ```
+#[cfg(not(target_arch = "wasm32"))]
 pub async fn with_mock_tools<F, R>(registry: MockToolRegistry, f: F) -> R
 where
     F: Future<Output = R>,
@@ -42,12 +41,29 @@ where
         .await
 }
 
+/// Run a future with a mock tool registry in scope (WASM variant).
+#[cfg(target_arch = "wasm32")]
+pub async fn with_mock_tools<F, R>(registry: MockToolRegistry, f: F) -> R
+where
+    F: Future<Output = R>,
+{
+    MOCK_TOOL_REGISTRY.with(|cell| {
+        *cell.borrow_mut() = Some(registry);
+    });
+    let result = f.await;
+    MOCK_TOOL_REGISTRY.with(|cell| {
+        *cell.borrow_mut() = None;
+    });
+    result
+}
+
 /// Try to get a mock response for a tool function call.
 ///
 /// Returns `Some(response)` if a mock is registered and available,
 /// `None` if no mock is registered or if called outside a mock context.
 ///
 /// This is called by tool clients to intercept calls during tests.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn try_get_mock(tool: &str, function: &str) -> Option<MockResponse> {
     MOCK_TOOL_REGISTRY
         .try_with(|cell| {
@@ -57,6 +73,16 @@ pub fn try_get_mock(tool: &str, function: &str) -> Option<MockResponse> {
         })
         .ok()
         .flatten()
+}
+
+/// Try to get a mock response for a tool function call (WASM variant).
+#[cfg(target_arch = "wasm32")]
+pub fn try_get_mock(tool: &str, function: &str) -> Option<MockResponse> {
+    MOCK_TOOL_REGISTRY.with(|cell| {
+        cell.borrow()
+            .as_ref()
+            .and_then(|reg| reg.get(tool, function))
+    })
 }
 
 /// A mock response for an `infer` call.

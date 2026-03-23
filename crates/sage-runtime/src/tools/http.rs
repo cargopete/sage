@@ -3,6 +3,7 @@
 //! Provides the `Http` tool with `get`, `post`, `put`, and `delete` methods.
 
 use std::collections::HashMap;
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
 
 use crate::error::{SageError, SageResult};
@@ -27,15 +28,16 @@ impl Default for HttpConfig {
 }
 
 impl HttpConfig {
-    /// Create config from environment variables.
-    ///
-    /// Reads:
-    /// - `SAGE_HTTP_TIMEOUT`: Request timeout in seconds (default: 30)
+    /// Create config from environment variables (native) or defaults (WASM).
     pub fn from_env() -> Self {
+        #[cfg(not(target_arch = "wasm32"))]
         let timeout_secs = std::env::var("SAGE_HTTP_TIMEOUT")
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(30);
+
+        #[cfg(target_arch = "wasm32")]
+        let timeout_secs = 30;
 
         Self {
             timeout_secs,
@@ -78,11 +80,18 @@ impl HttpClient {
 
     /// Create a new HTTP client with the given configuration.
     pub fn with_config(config: HttpConfig) -> Self {
-        let client = reqwest::Client::builder()
+        let builder = reqwest::Client::builder();
+
+        // timeout() and user_agent() are not available on the WASM backend
+        #[cfg(not(target_arch = "wasm32"))]
+        let builder = builder
             .timeout(Duration::from_secs(config.timeout_secs))
-            .user_agent(&config.user_agent)
-            .build()
-            .expect("failed to build HTTP client");
+            .user_agent(&config.user_agent);
+
+        #[cfg(target_arch = "wasm32")]
+        let _ = &config; // suppress unused warning
+
+        let client = builder.build().expect("failed to build HTTP client");
 
         Self { client }
     }
