@@ -1,0 +1,17 @@
+// WASM Counter — demonstrates loops and string operations in the browser
+// Build with: sage build examples/wasm_counter.sg --target web
+
+agent Counter {
+    on start {
+        print("Counter agent started");
+        let i = 0;
+        while i < 5 {
+            i = i + 1;
+            print("  count: " ++ int_to_str(i));
+        }
+        print("Counter finished — final count: " ++ int_to_str(i));
+        yield(i);
+    }
+}
+
+run Counter;

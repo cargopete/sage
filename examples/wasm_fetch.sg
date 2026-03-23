@@ -1,0 +1,23 @@
+// WASM Fetch — demonstrates HTTP requests from the browser via Fetch API
+// Build with: sage build examples/wasm_fetch.sg --target web
+// Note: target URL must allow CORS
+
+agent Fetcher {
+    use Http
+
+    on start {
+        print("Fetching data from httpbin.org...");
+        let resp = try Http.get("https://httpbin.org/get");
+        print("Status: " ++ int_to_str(resp.status));
+        print("Body length: " ++ int_to_str(len(resp.body)));
+        print("Done!");
+        yield(resp.status);
+    }
+
+    on error(e) {
+        print("Fetch failed (CORS issue?)");
+        yield(0);
+    }
+}
+
+run Fetcher;
