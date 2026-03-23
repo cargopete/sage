@@ -63,15 +63,16 @@ run Coordinator;
 
 ## Status
 
-**v2.0.2** — CI fixes, codegen ownership fixes, clippy clean. Plus extern functions (Rust FFI) and The Steward Architecture.
+**v2.1.0** — WebAssembly compilation target, online playground, plus extern functions (Rust FFI) and The Steward Architecture.
 
 | | |
 |---|---|
-| **Latest** | [v2.0.2](https://github.com/sagelang/sage/releases/tag/v2.0.2) |
+| **Latest** | [v2.1.0](https://github.com/sagelang/sage/releases/tag/v2.1.0) |
 | **Extension** | `.sg` |
-| **Platforms** | macOS (ARM), Linux (x86_64, ARM) |
+| **Platforms** | macOS (ARM), Linux (x86_64, ARM), **WebAssembly** |
 | **Build time** | ~0.5s |
 | **Editors** | [Zed](https://zed.dev), [VS Code](https://code.visualstudio.com) |
+| **Playground** | [sagelang.github.io/sage-playground](https://sagelang.github.io/sage-playground/) |
 
 See the [RFCs repository](https://github.com/sagelang/rfcs) for the language specification.
 
@@ -830,6 +831,24 @@ Following Rust conventions:
 - **Required** after: `let`, `return`, assignments, expression statements, `run`
 - **Not required** after block statements: `if`/`else`, `for`
 
+### WebAssembly Target
+
+Sage can compile agents to WebAssembly for browser execution:
+
+```bash
+sage build hello.sg --target web
+```
+
+This produces a `.wasm` bundle in `pkg/` using `wasm-bindgen` and optional `wasm-opt` optimisation. The WASM target uses `sage-runtime-web` instead of the native runtime, replacing `tokio` with browser-compatible APIs.
+
+### Online Playground
+
+Try Sage instantly in your browser — no installation required:
+
+**[sagelang.github.io/sage-playground](https://sagelang.github.io/sage-playground/)**
+
+The playground runs a tree-walking interpreter compiled to WebAssembly. Write code, press Run (or Ctrl+Enter), and see output immediately. Supports functions, control flow, records, enums, pattern matching, and all standard library operations.
+
 ## Installation
 
 ### Prerequisites
@@ -947,6 +966,12 @@ export SAGE_API_KEY="your-openai-api-key"
 sage run examples/research.sg
 ```
 
+Build for WebAssembly:
+
+```bash
+sage build hello.sg --target web
+```
+
 Check a program for errors without running:
 
 ```bash
@@ -973,6 +998,7 @@ Sage follows a traditional multi-pass compiler architecture:
 
 ```
 Source (.sg) → Lexer → Parser → Loader → Type Checker → Rust Codegen → Native Binary
+                                                                      ↘ WASM Codegen → WebAssembly
 ```
 
 The compiler is written in ~9,000 lines of Rust, organised into focused crates:
@@ -986,6 +1012,8 @@ The compiler is written in ~9,000 lines of Rust, organised into focused crates:
 | `sage-codegen` | Rust code generator |
 | `sage-runtime` | Async runtime, LLM integration |
 | `sage-persistence` | Checkpoint storage (SQLite, Postgres, file) |
+| `sage-runtime-web` | WASM-compatible runtime (browser) |
+| `sage-playground-engine` | Tree-walking interpreter for the web playground |
 | `sage-sense` | Language Server Protocol (LSP) |
 | `sage-cli` | Command-line interface |
 
@@ -1001,6 +1029,8 @@ sage/
 │   ├── sage-codegen/      # Rust code generator
 │   ├── sage-runtime/      # Runtime library (agents, LLM, etc.)
 │   ├── sage-persistence/  # Checkpoint storage layer
+│   ├── sage-runtime-web/  # WASM-compatible runtime
+│   ├── sage-playground-engine/ # Browser interpreter (WASM)
 │   ├── sage-sense/        # Language Server Protocol (LSP)
 │   └── sage-cli/          # CLI entry point
 ├── scripts/
@@ -1024,6 +1054,7 @@ sage/
 | [sagelang/ward](https://github.com/sagelang/ward) | Ward — interactive coding agent |
 | [sagelang/walter-sg](https://github.com/sagelang/walter-sg) | Walter — Victorian Discord bot |
 | [sagelang/sagentic-debate](https://github.com/sagelang/sagentic-debate) | Multi-agent debate showcase |
+| [sagelang/sage-playground](https://github.com/sagelang/sage-playground) | Online playground (WASM) |
 
 ## License
 
