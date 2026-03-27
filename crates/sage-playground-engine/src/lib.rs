@@ -201,4 +201,25 @@ run Hangman;
         assert!(success, "should succeed, got error: {error}");
         assert!(!output.is_empty(), "should have print output");
     }
+
+    #[test]
+    fn infinite_loop_caught() {
+        let source = r#"
+agent Main {
+    on start {
+        while true {
+            print("looping");
+        }
+        yield(0);
+    }
+}
+run Main;
+"#;
+        let (success, _output, error) = run(source);
+        assert!(!success, "should fail on infinite loop");
+        assert!(
+            error.contains("Execution limit"),
+            "should mention execution limit, got: {error}"
+        );
+    }
 }

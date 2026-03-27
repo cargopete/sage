@@ -215,7 +215,7 @@ impl Interpreter {
             enums: HashMap::new(),
             constants: HashMap::new(),
             steps: 0,
-            max_steps: 1_000_000,
+            max_steps: 100_000,
         }
     }
 
