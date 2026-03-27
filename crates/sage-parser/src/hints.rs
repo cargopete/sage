@@ -117,14 +117,32 @@ pub fn error_hint(error: &ParseError) -> Option<String> {
         }
 
         // ── `if` inside an agent body (outside a handler) ───────────
-        Token::KwIf if expected_contains(&expected, &Token::KwOn) =>
-        {
-            Some(
-                "Oswyn suggests: control flow belongs inside `on` handlers, \
-                 not at the agent body level."
-                    .to_string(),
-            )
-        }
+        Token::KwIf if expected_contains(&expected, &Token::KwOn) => Some(
+            "Oswyn suggests: control flow belongs inside `on` handlers, \
+             not at the agent body level."
+                .to_string(),
+        ),
+
+        // ── `not x` instead of `!x` ────────────────────────────────
+        // `not` is not a keyword — it's parsed as an identifier.
+        // Two identifiers in a row (e.g., `not contains(...)`) produces
+        // "found <ident> expected operators" because the parser already
+        // consumed `not` as a variable expression.
+        Token::Ident if looks_like_postfix_position(&expected) => Some(
+            "Oswyn suggests: if you meant logical negation, Sage uses `!` \
+             not `not`.\n  \
+             Example: `if !contains(list, item) { ... }`"
+                .to_string(),
+        ),
+
+        // ── `catch expr { }` instead of `expr catch { }` ───────────
+        // `catch` is a postfix operator, not a prefix keyword.
+        Token::KwCatch if looks_like_expr_start_position(&expected) => Some(
+            "Oswyn suggests: `catch` is a postfix operator, not a prefix. \
+             Write the fallible expression first, then `catch`.\n  \
+             Example: `let x = divine(\"prompt\") catch { \"fallback\" };`"
+                .to_string(),
+        ),
 
         _ => None,
     }
@@ -270,6 +288,28 @@ mod tests {
         let err = make_error(Token::KwIf, vec![Token::RBrace, Token::KwOn]);
         let hint = error_hint(&err).expect("should produce a hint");
         assert!(hint.contains("on"), "hint: {hint}");
+    }
+
+    #[test]
+    fn hint_not_keyword() {
+        // `not contains(...)` → `not` parsed as ident, then `contains` is another ident
+        let err = make_error(
+            Token::Ident,
+            vec![Token::Plus, Token::Star, Token::Semicolon, Token::PlusPlus],
+        );
+        let hint = error_hint(&err).expect("should produce a hint");
+        assert!(hint.contains("!"), "hint: {hint}");
+    }
+
+    #[test]
+    fn hint_catch_prefix() {
+        // `catch divine(...)` — catch used as prefix instead of postfix
+        let err = make_error(
+            Token::KwCatch,
+            vec![Token::Ident, Token::IntLit, Token::KwSelf, Token::KwTry],
+        );
+        let hint = error_hint(&err).expect("should produce a hint");
+        assert!(hint.contains("postfix"), "hint: {hint}");
     }
 
     #[test]
