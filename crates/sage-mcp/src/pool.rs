@@ -4,12 +4,36 @@
 //! on first use and shared across all agents in the program via `Arc`.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use tokio::sync::Mutex;
 
 use crate::client::McpClient;
 use crate::config::McpToolConfig;
 use crate::error::{McpError, McpResult};
+
+// ---------------------------------------------------------------------------
+// Global pool — set once in main(), shared by all summoned agents
+// ---------------------------------------------------------------------------
+
+static GLOBAL_POOL: LazyLock<Mutex<Option<Arc<McpConnectionPool>>>> =
+    LazyLock::new(|| Mutex::new(None));
+
+/// Register the process-wide MCP connection pool.
+///
+/// Called once from generated `main()`. Subsequent calls replace the pool.
+pub async fn set_global_pool(pool: Arc<McpConnectionPool>) {
+    let mut guard = GLOBAL_POOL.lock().await;
+    *guard = Some(pool);
+}
+
+/// Retrieve the global MCP connection pool, if one has been registered.
+///
+/// Used by summoned agents to share connections with the root agent
+/// instead of creating redundant pools.
+pub async fn global_pool() -> Option<Arc<McpConnectionPool>> {
+    let guard = GLOBAL_POOL.lock().await;
+    guard.as_ref().map(Arc::clone)
+}
 
 /// A pool of MCP connections, keyed by tool name.
 ///

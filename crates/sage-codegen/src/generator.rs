@@ -1902,24 +1902,27 @@ serde_json = "1"
             .writeln("let terminate = std::future::pending::<()>();");
         self.emit.writeln("");
 
-        // RFC-0023: Initialize MCP connection pool if any MCP tools are used
-        let agent_has_mcp = agent.tool_uses.iter().any(|t| self.is_mcp_tool(&t.name));
-        if agent_has_mcp {
+        // RFC-0023: Initialize MCP connection pool if any MCP tools are configured.
+        // This runs even if the root agent doesn't use MCP tools directly,
+        // because summoned child agents may need the pool.
+        if self.has_mcp_tools() {
             self.emit
                 .writeln("let mut _mcp_configs = std::collections::HashMap::new();");
-            for tool_use in &agent.tool_uses {
-                if self.is_mcp_tool(&tool_use.name) {
-                    let tool_key = tool_use.name.to_lowercase();
-                    let mcp_cfg = self.config.mcp_tools.get(&tool_key).cloned();
-                    if let Some(cfg) = mcp_cfg {
-                        self.emit_mcp_config_insert(&tool_key, &cfg);
-                    }
-                }
+            // Insert ALL configured MCP tools, not just the root agent's
+            let all_mcp_tools: Vec<_> = self.config.mcp_tools.iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            for (tool_key, cfg) in &all_mcp_tools {
+                self.emit_mcp_config_insert(tool_key, cfg);
             }
             self.emit.writeln(
                 "let _mcp_pool = std::sync::Arc::new(sage_mcp::McpConnectionPool::new(_mcp_configs));",
             );
-            // Build per-tool clients
+            // Register global pool so summoned agents can share connections
+            self.emit.writeln(
+                "sage_mcp::set_global_pool(std::sync::Arc::clone(&_mcp_pool)).await;",
+            );
+            // Build per-tool clients for tools the root agent uses directly
             for tool_use in &agent.tool_uses {
                 if self.is_mcp_tool(&tool_use.name) {
                     let tool_key = tool_use.name.to_lowercase();
@@ -2410,6 +2413,25 @@ serde_json = "1"
         // Initialize tracing with config
         self.emit_tracing_init();
         self.emit.writeln("");
+
+        // RFC-0023: Initialize global MCP connection pool if any MCP tools are configured
+        if self.has_mcp_tools() {
+            self.emit
+                .writeln("let mut _mcp_configs = std::collections::HashMap::new();");
+            let all_mcp_tools: Vec<_> = self.config.mcp_tools.iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            for (tool_key, cfg) in &all_mcp_tools {
+                self.emit_mcp_config_insert(tool_key, cfg);
+            }
+            self.emit.writeln(
+                "let _mcp_pool = std::sync::Arc::new(sage_mcp::McpConnectionPool::new(_mcp_configs));",
+            );
+            self.emit.writeln(
+                "sage_mcp::set_global_pool(std::sync::Arc::clone(&_mcp_pool)).await;",
+            );
+            self.emit.writeln("");
+        }
 
         // Create the supervisor with the configured strategy
         self.emit
@@ -4368,7 +4390,7 @@ serde_json = "1"
                     self.emit.write(").clone(); ");
                 }
 
-                // RFC-0023: Set up MCP pool for summoned agents that use MCP tools
+                // RFC-0023: Build MCP tool clients from the global pool for summoned agents
                 let mcp_tools_in_summon: Vec<String> = tool_uses
                     .iter()
                     .filter(|t| self.is_mcp_tool(t))
@@ -4376,16 +4398,7 @@ serde_json = "1"
                     .collect();
                 if !mcp_tools_in_summon.is_empty() {
                     self.emit.write(
-                        "let mut _mcp_configs = std::collections::HashMap::new(); ",
-                    );
-                    for tool_name in &mcp_tools_in_summon {
-                        let tool_key = tool_name.to_lowercase();
-                        if let Some(cfg) = self.config.mcp_tools.get(&tool_key).cloned() {
-                            self.emit_mcp_config_insert(&tool_key, &cfg);
-                        }
-                    }
-                    self.emit.write(
-                        "let __mcp_pool = std::sync::Arc::new(sage_mcp::McpConnectionPool::new(_mcp_configs)); ",
+                        "let __mcp_pool = sage_mcp::global_pool().await.expect(\"MCP pool not initialized\"); ",
                     );
                     for tool_name in &mcp_tools_in_summon {
                         let tool_key = tool_name.to_lowercase();

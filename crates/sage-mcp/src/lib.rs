@@ -35,5 +35,5 @@ pub mod transport;
 pub use client::{ContentItem, McpToolInfo, ToolCallResult};
 pub use config::{AuthConfig, McpToolConfig, TransportType};
 pub use error::{McpError, McpResult};
-pub use pool::McpConnectionPool;
+pub use pool::{global_pool, set_global_pool, McpConnectionPool};
 pub use tool_client::{McpToolClient, McpToolClientBuilder};

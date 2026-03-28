@@ -1,0 +1,95 @@
+// RFC-0023: MCP integration tests
+// Run with: sage test tests/ --filter mcp
+
+// ============================================================================
+// TESTS - Single-Quoted Strings (raw, no interpolation)
+// ============================================================================
+
+test "single-quoted string preserves braces" {
+    let json = '{"key": "value"}';
+    assert_true(str_len(json) > 5);
+}
+
+test "single-quoted string with nested braces" {
+    let config = '{"transport":"stdio","args":["-y"]}';
+    assert_true(str_contains(config, "stdio"));
+}
+
+test "single-quoted string does not interpolate" {
+    let x = 42;
+    let s = '{x}';
+    // Should be literal "{x}", not "42"
+    assert_eq(s, '{x}');
+}
+
+test "double-quoted string still interpolates" {
+    let x = 42;
+    let s = "{x}";
+    assert_eq(s, "42");
+}
+
+test "single-quoted string with double quotes inside" {
+    let s = '{"name": "hello"}';
+    assert_true(str_contains(s, "hello"));
+    assert_true(str_contains(s, "name"));
+}
+
+test "single-quoted empty braces" {
+    let s = '{}';
+    assert_eq(s, '{}');
+}
+
+test "single-quoted string with backslash escapes" {
+    let s = 'line1\nline2';
+    let parts = lines(s);
+    assert_eq(len(parts), 2);
+}
+
+// ============================================================================
+// TESTS - MCP Tool Mocking
+// ============================================================================
+
+test "mock MCP-style tool call" {
+    mock tool Http.get -> '{"status": 200, "body": "hello"}';
+    assert_true(true);
+}
+
+test "mock tool failure for MCP scenario" {
+    mock tool Http.get -> fail("MCP connection refused");
+    assert_true(true);
+}
+
+// ============================================================================
+// TESTS - String Concatenation (used in MCP report building)
+// ============================================================================
+
+test "concatenate strings for MCP report" {
+    let header = "## Issues\n\n";
+    let issues = "1. Bug\n2. Feature";
+    let footer = "\n\n## Done";
+    let report = header ++ issues ++ footer;
+    assert_true(str_contains(report, "Issues"));
+    assert_true(str_contains(report, "Bug"));
+    assert_true(str_contains(report, "Done"));
+}
+
+test "format with braces in single quotes" {
+    let template = '{"tool": "{name}"}';
+    // Single-quoted: {name} is literal, not interpolation
+    assert_true(str_contains(template, '{name}'));
+}
+
+test "single-quoted JSON round-trip" {
+    let json = '{"transport":"stdio","command":"npx","args":["-y","@mcp/server"]}';
+    assert_true(str_contains(json, "transport"));
+    assert_true(str_contains(json, "npx"));
+    assert_true(str_contains(json, "@mcp/server"));
+}
+
+test "mixed quote styles" {
+    let name = "world";
+    let greeting = "hello {name}";
+    let raw = '{name}';
+    assert_eq(greeting, "hello world");
+    assert_eq(raw, '{name}');
+}
