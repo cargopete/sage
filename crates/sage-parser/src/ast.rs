@@ -184,6 +184,10 @@ pub struct ToolFnDecl {
     pub params: Vec<Param>,
     /// The return type.
     pub return_ty: TypeExpr,
+    /// MCP tool name override: `#[mcp_name("remote_tool_name")]`.
+    /// When set, the generated code maps this Sage function name to
+    /// a different MCP tool name on the server.
+    pub mcp_name: Option<String>,
     /// Span covering the declaration.
     pub span: Span,
 }

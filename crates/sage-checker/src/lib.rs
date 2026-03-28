@@ -2481,4 +2481,125 @@ run Main;
             result.errors
         );
     }
+
+    // =========================================================================
+    // RFC-0023: MCP Builtins
+    // =========================================================================
+
+    #[test]
+    fn check_mcp_connect_in_try() {
+        let source = r#"
+            agent Main {
+                on start {
+                    let handle = try mcp_connect("{}");
+                    yield(0);
+                }
+                on error(e) {
+                    yield(1);
+                }
+            }
+            run Main;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+    }
+
+    #[test]
+    fn check_mcp_call_in_try() {
+        let source = r#"
+            agent Main {
+                on start {
+                    let result = try mcp_call("h", "tool_name", "{}");
+                    yield(0);
+                }
+                on error(e) {
+                    yield(1);
+                }
+            }
+            run Main;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+    }
+
+    #[test]
+    fn check_mcp_list_tools_returns_string() {
+        let source = r#"
+            agent Main {
+                on start {
+                    let tools = mcp_list_tools("h") catch { "[]" };
+                    yield(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+    }
+
+    #[test]
+    fn check_mcp_disconnect_in_try() {
+        let source = r#"
+            agent Main {
+                on start {
+                    try mcp_disconnect("h");
+                    yield(0);
+                }
+                on error(e) {
+                    yield(1);
+                }
+            }
+            run Main;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+    }
+
+    #[test]
+    fn check_mcp_connect_wrong_arg_type() {
+        let source = r#"
+            agent Main {
+                on start {
+                    let handle = try mcp_connect(42);
+                    yield(0);
+                }
+                on error(e) {
+                    yield(1);
+                }
+            }
+            run Main;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(!result.errors.is_empty());
+    }
+
+    #[test]
+    fn check_user_defined_tool_registered() {
+        let source = r#"
+            tool Github {
+                fn list_issues(repo: String) -> String
+                fn create_pr(title: String, body: String) -> String
+            }
+
+            agent Main {
+                use Github
+                on start {
+                    let issues = try Github.list_issues("sage-lang/sage");
+                    yield(0);
+                }
+                on error(e) {
+                    yield(1);
+                }
+            }
+            run Main;
+        "#;
+
+        let (_, result) = check_source(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+    }
 }

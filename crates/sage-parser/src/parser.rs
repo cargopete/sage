@@ -442,6 +442,7 @@ fn tool_parser(source: Arc<str>) -> impl Parser<Token, TopLevel, Error = ParseEr
                 name,
                 params,
                 return_ty,
+                mcp_name: None, // TODO: parse @mcp_name("...") annotation
                 span: make_span(&src2, span),
             },
         );
@@ -2641,9 +2642,15 @@ fn literal_parser(source: Arc<str>) -> impl Parser<Token, Expr, Error = ParseErr
     let string_lit = filter_map(move |span: Range<usize>, token| match token {
         Token::StringLit => {
             let text = &src5[span.start..span.end];
+            let quote_char = text.chars().next().unwrap_or('"');
             let inner = &text[1..text.len() - 1];
-            let parts = parse_string_template(inner, &make_span(&src5, span.clone()));
-            Ok(parts)
+            if quote_char == '\'' {
+                // Single-quoted strings are raw (no interpolation)
+                Ok(vec![StringPart::Literal(unescape_string(inner))])
+            } else {
+                let parts = parse_string_template(inner, &make_span(&src5, span.clone()));
+                Ok(parts)
+            }
         }
         _ => Err(Simple::expected_input_found(
             span,

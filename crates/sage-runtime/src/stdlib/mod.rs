@@ -9,6 +9,8 @@ mod env;
 #[cfg(not(target_arch = "wasm32"))]
 mod io;
 mod json;
+#[cfg(feature = "mcp")]
+pub mod mcp;
 mod parsing;
 mod string;
 mod time;

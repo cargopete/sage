@@ -2,6 +2,7 @@
 
 use crate::error::LoadError;
 use sage_package::{parse_dependencies, DependencySpec};
+use serde::de::Deserializer;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -25,11 +26,64 @@ pub struct ProjectManifest {
 }
 
 /// Tool configuration section of grove.toml.
-#[derive(Debug, Clone, Deserialize, Default)]
+///
+/// Built-in tools (database, http, filesystem) have typed configs.
+/// MCP tools (RFC-0023) are captured as raw TOML values.
+///
+/// Uses a custom deserializer so that a key like `[tools.filesystem]` is
+/// tried as the built-in `FileSystemToolConfig` first; if that fails (e.g.
+/// the table contains MCP fields like `transport`) it falls back to being
+/// treated as an MCP tool config. This avoids forcing users to avoid
+/// reserved tool names.
+#[derive(Debug, Clone, Default)]
 pub struct ToolsConfig {
     pub database: Option<DatabaseToolConfig>,
     pub http: Option<HttpToolConfig>,
     pub filesystem: Option<FileSystemToolConfig>,
+    /// MCP tool configurations — any `[tools.X]` section that doesn't
+    /// match a built-in tool schema ends up here as raw TOML.
+    pub mcp: HashMap<String, toml::Value>,
+}
+
+impl<'de> Deserialize<'de> for ToolsConfig {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let mut table = toml::Table::deserialize(deserializer)?;
+        let mut mcp = HashMap::new();
+
+        // Try each known key as its built-in type; on failure route to MCP.
+        let database = extract_or_mcp::<DatabaseToolConfig>(&mut table, &mut mcp, "database");
+        let http = extract_or_mcp::<HttpToolConfig>(&mut table, &mut mcp, "http");
+        let filesystem = extract_or_mcp::<FileSystemToolConfig>(&mut table, &mut mcp, "filesystem");
+
+        // Everything remaining is an MCP tool.
+        for (key, value) in table {
+            mcp.insert(key, value);
+        }
+
+        Ok(ToolsConfig {
+            database,
+            http,
+            filesystem,
+            mcp,
+        })
+    }
+}
+
+/// Try to deserialize a TOML value as type `T`. If it succeeds, return
+/// `Some(T)`. If it fails, push the value into the MCP map and return `None`.
+fn extract_or_mcp<T: serde::de::DeserializeOwned>(
+    table: &mut toml::Table,
+    mcp: &mut HashMap<String, toml::Value>,
+    key: &str,
+) -> Option<T> {
+    let value = table.remove(key)?;
+    match value.clone().try_into::<T>() {
+        Ok(typed) => Some(typed),
+        Err(_) => {
+            mcp.insert(key.to_string(), value);
+            None
+        }
+    }
 }
 
 /// Database tool configuration.
@@ -535,5 +589,109 @@ backend = "none"
 "#;
         let manifest: ProjectManifest = toml::from_str(toml).unwrap();
         assert_eq!(manifest.observability.backend, "none");
+    }
+
+    // =========================================================================
+    // RFC-0023: MCP Tool Configs
+    // =========================================================================
+
+    #[test]
+    fn parse_mcp_tools_empty() {
+        let toml = r#"
+[project]
+name = "test"
+"#;
+        let manifest: ProjectManifest = toml::from_str(toml).unwrap();
+        assert!(manifest.tools.mcp.is_empty());
+    }
+
+    #[test]
+    fn parse_mcp_tool_stdio() {
+        let toml = r#"
+[project]
+name = "test"
+
+[tools.github]
+transport = "stdio"
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-github"]
+"#;
+        let manifest: ProjectManifest = toml::from_str(toml).unwrap();
+        assert!(manifest.tools.mcp.contains_key("github"));
+        let github = manifest.tools.mcp.get("github").unwrap();
+        let table = github.as_table().unwrap();
+        assert_eq!(table.get("transport").unwrap().as_str().unwrap(), "stdio");
+        assert_eq!(table.get("command").unwrap().as_str().unwrap(), "npx");
+    }
+
+    #[test]
+    fn parse_mcp_tool_http() {
+        let toml = r#"
+[project]
+name = "test"
+
+[tools.slack]
+transport = "http"
+url = "https://mcp.slack.example.com"
+timeout_ms = 5000
+"#;
+        let manifest: ProjectManifest = toml::from_str(toml).unwrap();
+        assert!(manifest.tools.mcp.contains_key("slack"));
+        let slack = manifest.tools.mcp.get("slack").unwrap();
+        let table = slack.as_table().unwrap();
+        assert_eq!(table.get("transport").unwrap().as_str().unwrap(), "http");
+        assert_eq!(
+            table.get("url").unwrap().as_str().unwrap(),
+            "https://mcp.slack.example.com"
+        );
+    }
+
+    #[test]
+    fn parse_mcp_tools_coexist_with_builtins() {
+        let toml = r#"
+[project]
+name = "test"
+
+[tools.database]
+driver = "postgres"
+url = "postgresql://localhost/db"
+
+[tools.github]
+transport = "stdio"
+command = "npx"
+args = ["-y", "@mcp/server-github"]
+
+[tools.slack]
+transport = "http"
+url = "https://mcp.slack.example.com"
+"#;
+        let manifest: ProjectManifest = toml::from_str(toml).unwrap();
+        // Built-in tools are parsed into typed fields
+        assert!(manifest.tools.database.is_some());
+        // MCP tools are captured via serde(flatten)
+        assert_eq!(manifest.tools.mcp.len(), 2);
+        assert!(manifest.tools.mcp.contains_key("github"));
+        assert!(manifest.tools.mcp.contains_key("slack"));
+    }
+
+    #[test]
+    fn parse_mcp_tool_with_env() {
+        let toml = r#"
+[project]
+name = "test"
+
+[tools.github]
+transport = "stdio"
+command = "npx"
+args = ["-y", "@mcp/server-github"]
+
+[tools.github.env]
+GITHUB_TOKEN = "$GITHUB_TOKEN"
+"#;
+        let manifest: ProjectManifest = toml::from_str(toml).unwrap();
+        let github = manifest.tools.mcp.get("github").unwrap();
+        let table = github.as_table().unwrap();
+        let env = table.get("env").unwrap().as_table().unwrap();
+        assert_eq!(env.get("GITHUB_TOKEN").unwrap().as_str().unwrap(), "$GITHUB_TOKEN");
     }
 }

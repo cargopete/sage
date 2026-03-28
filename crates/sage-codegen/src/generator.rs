@@ -29,20 +29,32 @@ impl Default for RuntimeDep {
 impl RuntimeDep {
     /// Generate the Cargo.toml dependency line.
     fn to_cargo_dep(&self, feature: Option<&str>) -> String {
+        let features: Vec<&str> = feature.into_iter().collect();
+        self.to_cargo_dep_features(&features)
+    }
+
+    fn to_cargo_dep_features(&self, features: &[&str]) -> String {
+        let feat_str = if features.is_empty() {
+            String::new()
+        } else {
+            let inner = features
+                .iter()
+                .map(|f| format!("\"{}\"", f))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(", features = [{}]", inner)
+        };
+
         match self {
             RuntimeDep::CratesIo { version } => {
-                if let Some(feat) = feature {
-                    format!("sage-runtime = {{ version = \"{version}\", features = [\"{feat}\"] }}")
-                } else {
+                if feat_str.is_empty() {
                     format!("sage-runtime = \"{version}\"")
+                } else {
+                    format!("sage-runtime = {{ version = \"{version}\"{feat_str} }}")
                 }
             }
             RuntimeDep::Path { path } => {
-                if let Some(feat) = feature {
-                    format!("sage-runtime = {{ path = \"{path}\", features = [\"{feat}\"] }}")
-                } else {
-                    format!("sage-runtime = {{ path = \"{path}\" }}")
-                }
+                format!("sage-runtime = {{ path = \"{path}\"{feat_str} }}")
             }
         }
     }
@@ -95,6 +107,30 @@ pub enum CodegenTarget {
     Wasm,
 }
 
+/// MCP tool configuration for code generation (RFC-0023).
+///
+/// This contains the information needed to generate MCP connection
+/// code in the compiled Rust output. One entry per `[tools.X]` section
+/// in grove.toml that isn't a built-in tool.
+#[derive(Debug, Clone)]
+pub struct McpToolGenConfig {
+    /// Transport type: "stdio" or "http".
+    pub transport: String,
+    /// Command to launch (stdio).
+    pub command: Option<String>,
+    /// Command arguments (stdio).
+    pub args: Vec<String>,
+    /// Environment variables (stdio). Values starting with `$` are
+    /// resolved from the host environment at runtime.
+    pub env: std::collections::HashMap<String, String>,
+    /// Server URL (http).
+    pub url: Option<String>,
+    /// Per-call timeout in milliseconds.
+    pub timeout_ms: u64,
+    /// Connection timeout in milliseconds.
+    pub connect_timeout_ms: u64,
+}
+
 /// Full configuration for code generation.
 #[derive(Debug, Clone, Default)]
 pub struct CodegenConfig {
@@ -108,6 +144,9 @@ pub struct CodegenConfig {
     pub observability: ObservabilityConfig,
     /// Target platform (native or WASM).
     pub target: CodegenTarget,
+    /// MCP tool configurations (RFC-0023).
+    /// Key is the tool name (lowercase) as it appears in grove.toml.
+    pub mcp_tools: std::collections::HashMap<String, McpToolGenConfig>,
 }
 
 /// Generated Rust project files.
@@ -285,6 +324,97 @@ impl Generator {
             observability: ObservabilityConfig::default(),
             ..Default::default()
         })
+    }
+
+    /// Built-in tool names that have dedicated client types in sage-runtime.
+    const BUILTIN_TOOLS: &'static [&'static str] = &["Http", "Fs", "Shell", "Database"];
+
+    /// Check if a tool name refers to an MCP tool (not a built-in).
+    fn is_mcp_tool(&self, tool_name: &str) -> bool {
+        !Self::BUILTIN_TOOLS.contains(&tool_name)
+            && self
+                .config
+                .mcp_tools
+                .contains_key(&tool_name.to_lowercase())
+    }
+
+    /// Check if the program uses any MCP tools.
+    fn has_mcp_tools(&self) -> bool {
+        !self.config.mcp_tools.is_empty()
+    }
+
+    /// Emit a `_mcp_configs.insert(...)` call for a single MCP tool.
+    fn emit_mcp_config_insert(&mut self, tool_key: &str, cfg: &McpToolGenConfig) {
+        self.emit
+            .write(&format!("_mcp_configs.insert(\"{}\".to_string(), ", tool_key));
+        self.emit.writeln("sage_mcp::McpToolConfig {");
+        self.emit.indent();
+
+        // Transport
+        if cfg.transport == "http" {
+            self.emit
+                .writeln("transport: sage_mcp::TransportType::Http,");
+        } else {
+            self.emit
+                .writeln("transport: sage_mcp::TransportType::Stdio,");
+        }
+
+        // Command
+        if let Some(cmd) = &cfg.command {
+            self.emit
+                .writeln(&format!("command: Some(\"{}\".to_string()),", cmd));
+        } else {
+            self.emit.writeln("command: None,");
+        }
+
+        // Args
+        if cfg.args.is_empty() {
+            self.emit.writeln("args: None,");
+        } else {
+            self.emit.write("args: Some(vec![");
+            for (i, arg) in cfg.args.iter().enumerate() {
+                if i > 0 {
+                    self.emit.write(", ");
+                }
+                self.emit.write(&format!("\"{}\".to_string()", arg));
+            }
+            self.emit.writeln("]),");
+        }
+
+        // Env
+        if cfg.env.is_empty() {
+            self.emit.writeln("env: None,");
+        } else {
+            self.emit
+                .write("env: Some(std::collections::HashMap::from([");
+            for (k, v) in &cfg.env {
+                self.emit.write(&format!(
+                    "(\"{}\".to_string(), \"{}\".to_string()), ",
+                    k, v
+                ));
+            }
+            self.emit.writeln("])),");
+        }
+
+        // URL
+        if let Some(url) = &cfg.url {
+            self.emit
+                .writeln(&format!("url: Some(\"{}\".to_string()),", url));
+        } else {
+            self.emit.writeln("url: None,");
+        }
+
+        // Auth (not yet supported in codegen)
+        self.emit.writeln("auth_config: None,");
+
+        // Timeouts
+        self.emit
+            .writeln(&format!("timeout_ms: {},", cfg.timeout_ms));
+        self.emit
+            .writeln(&format!("connect_timeout_ms: {},", cfg.connect_timeout_ms));
+
+        self.emit.dedent();
+        self.emit.writeln("});");
     }
 
     /// Collect extern function names and fallibility from declarations.
@@ -668,13 +798,39 @@ impl Generator {
             return self.generate_wasm_cargo_toml(name);
         }
 
-        // Get the feature flag for the configured persistence backend
-        let feature_flag = if needs_persistence {
-            self.config.persistence.feature_flag()
+        // Collect runtime features needed
+        let mut features: Vec<&str> = Vec::new();
+        if needs_persistence {
+            if let Some(f) = self.config.persistence.feature_flag() {
+                features.push(f);
+            }
+        }
+        if self.has_mcp_tools() {
+            features.push("mcp");
+        }
+        let runtime_dep = self.config.runtime_dep.to_cargo_dep_features(&features);
+
+        // Add sage-mcp dependency if MCP tools are used
+        let mcp_dep = if self.has_mcp_tools() {
+            match &self.config.runtime_dep {
+                RuntimeDep::CratesIo { version } => {
+                    format!(
+                        "sage-mcp = {{ version = \"{}\" }}\n",
+                        version
+                    )
+                }
+                RuntimeDep::Path { path } => {
+                    // Derive sage-mcp path from runtime path
+                    let mcp_path = path.replace("sage-runtime", "sage-mcp");
+                    format!(
+                        "sage-mcp = {{ path = \"{}\" }}\n",
+                        mcp_path
+                    )
+                }
+            }
         } else {
-            None
+            String::new()
         };
-        let runtime_dep = self.config.runtime_dep.to_cargo_dep(feature_flag);
 
         format!(
             r#"[package]
@@ -684,7 +840,7 @@ edition = "2021"
 
 [dependencies]
 {runtime_dep}
-tokio = {{ version = "1", features = ["full"] }}
+{mcp_dep}tokio = {{ version = "1", features = ["full"] }}
 serde = {{ version = "1", features = ["derive"] }}
 serde_json = "1"
 
@@ -1414,13 +1570,18 @@ serde_json = "1"
             self.emit.writeln(" {");
             self.emit.indent();
 
-            // RFC-0011: Generate tool fields
+            // RFC-0011 / RFC-0023: Generate tool fields
             for tool_use in &agent.tool_uses {
-                // Generate field like: http: HttpClient
                 self.emit.write(&tool_use.name.to_lowercase());
                 self.emit.write(": ");
-                self.emit.write(&tool_use.name);
-                self.emit.writeln("Client,");
+                if self.is_mcp_tool(&tool_use.name) {
+                    // MCP tool: use McpToolClient
+                    self.emit.writeln("sage_mcp::McpToolClient,");
+                } else {
+                    // Built-in tool: use dedicated client type
+                    self.emit.write(&tool_use.name);
+                    self.emit.writeln("Client,");
+                }
             }
 
             // Check if this agent has any @persistent fields
@@ -1487,7 +1648,7 @@ serde_json = "1"
 
                 // RFC-0007: Generate on_error handler
                 EventKind::Error { param_name } => {
-                    self.emit.write("async fn on_error(&self, _");
+                    self.emit.write("async fn on_error(&self, ");
                     self.emit.write(&param_name.name);
                     self.emit.write(": SageError, ctx: &mut AgentContext<");
                     self.emit.write(&output_type);
@@ -1496,10 +1657,12 @@ serde_json = "1"
                     self.emit.writeln("> {");
                     self.emit.indent();
                     self.generate_block_contents(&handler.body);
-                    // Fallback: re-raise the error if handler doesn't explicitly return
-                    self.emit.write("Err(_");
-                    self.emit.write(&param_name.name);
-                    self.emit.writeln(")");
+                    // Fallback: re-raise the error if handler doesn't yield
+                    if !Self::block_has_yield(&handler.body) {
+                        self.emit.write("Err(");
+                        self.emit.write(&param_name.name);
+                        self.emit.writeln(")");
+                    }
                     self.emit.dedent();
                     self.emit.writeln("}");
                 }
@@ -1674,7 +1837,14 @@ serde_json = "1"
 
             // Add tool fields
             for tool_use in &agent.tool_uses {
-                if tool_use.name == "Database" {
+                if self.is_mcp_tool(&tool_use.name) {
+                    // MCP tool: use builder with pool
+                    fields.push(format!(
+                        "{}: _mcp_{}_client",
+                        tool_use.name.to_lowercase(),
+                        tool_use.name.to_lowercase()
+                    ));
+                } else if tool_use.name == "Database" {
                     fields.push(format!("{}: _db_client", tool_use.name.to_lowercase()));
                 } else {
                     fields.push(format!(
@@ -1731,6 +1901,36 @@ serde_json = "1"
         self.emit
             .writeln("let terminate = std::future::pending::<()>();");
         self.emit.writeln("");
+
+        // RFC-0023: Initialize MCP connection pool if any MCP tools are used
+        let agent_has_mcp = agent.tool_uses.iter().any(|t| self.is_mcp_tool(&t.name));
+        if agent_has_mcp {
+            self.emit
+                .writeln("let mut _mcp_configs = std::collections::HashMap::new();");
+            for tool_use in &agent.tool_uses {
+                if self.is_mcp_tool(&tool_use.name) {
+                    let tool_key = tool_use.name.to_lowercase();
+                    let mcp_cfg = self.config.mcp_tools.get(&tool_key).cloned();
+                    if let Some(cfg) = mcp_cfg {
+                        self.emit_mcp_config_insert(&tool_key, &cfg);
+                    }
+                }
+            }
+            self.emit.writeln(
+                "let _mcp_pool = std::sync::Arc::new(sage_mcp::McpConnectionPool::new(_mcp_configs));",
+            );
+            // Build per-tool clients
+            for tool_use in &agent.tool_uses {
+                if self.is_mcp_tool(&tool_use.name) {
+                    let tool_key = tool_use.name.to_lowercase();
+                    self.emit.write(&format!(
+                        "let _mcp_{}_client = sage_mcp::McpToolClientBuilder::new(\"{}\", std::sync::Arc::clone(&_mcp_pool))",
+                        tool_key, tool_key
+                    ));
+                    self.emit.writeln(".build();");
+                }
+            }
+        }
 
         self.emit
             .writeln("let handle = sage_runtime::spawn(move |mut ctx| async move {");
@@ -1998,7 +2198,13 @@ serde_json = "1"
             }
 
             for tool_use in &agent.tool_uses {
-                if tool_use.name == "Database" {
+                if self.is_mcp_tool(&tool_use.name) {
+                    fields.push(format!(
+                        "{}: _mcp_{}_client",
+                        tool_use.name.to_lowercase(),
+                        tool_use.name.to_lowercase()
+                    ));
+                } else if tool_use.name == "Database" {
                     // Database is stubbed on WASM, but still needs the field
                     fields.push(format!("{}: _db_client", tool_use.name.to_lowercase()));
                 } else {
@@ -3127,7 +3333,14 @@ serde_json = "1"
                 // Handle emit specially
                 if let Expr::Yield { value, .. } = expr {
                     self.emit.write("return ctx.emit(");
-                    self.generate_expr(value);
+                    // SelfField requires .clone() since self is behind a shared reference
+                    if matches!(value.as_ref(), Expr::SelfField { .. }) {
+                        self.emit.write("(");
+                        self.generate_expr(value);
+                        self.emit.write(").clone()");
+                    } else {
+                        self.generate_expr(value);
+                    }
                     self.emit.writeln(");");
                 } else if let Expr::Call { name, args, .. } = expr {
                     // Handle assertion builtins (needed for assertions inside span blocks)
@@ -3828,7 +4041,7 @@ serde_json = "1"
                         self.emit.write("sage_runtime::stdlib::read_file(&");
                         self.generate_expr(&args[0]);
                         self.emit
-                            .write(").map_err(sage_runtime::SageError::agent)?");
+                            .write(").map_err(sage_runtime::SageError::agent)");
                     }
                     "write_file" => {
                         self.emit.write("sage_runtime::stdlib::write_file(&");
@@ -3836,7 +4049,7 @@ serde_json = "1"
                         self.emit.write(", &");
                         self.generate_expr(&args[1]);
                         self.emit
-                            .write(").map_err(sage_runtime::SageError::agent)?");
+                            .write(").map_err(sage_runtime::SageError::agent)");
                     }
                     "append_file" => {
                         self.emit.write("sage_runtime::stdlib::append_file(&");
@@ -3844,7 +4057,7 @@ serde_json = "1"
                         self.emit.write(", &");
                         self.generate_expr(&args[1]);
                         self.emit
-                            .write(").map_err(sage_runtime::SageError::agent)?");
+                            .write(").map_err(sage_runtime::SageError::agent)");
                     }
                     "file_exists" => {
                         self.emit.write("sage_runtime::stdlib::file_exists(&");
@@ -3855,19 +4068,19 @@ serde_json = "1"
                         self.emit.write("sage_runtime::stdlib::delete_file(&");
                         self.generate_expr(&args[0]);
                         self.emit
-                            .write(").map_err(sage_runtime::SageError::agent)?");
+                            .write(").map_err(sage_runtime::SageError::agent)");
                     }
                     "list_dir" => {
                         self.emit.write("sage_runtime::stdlib::list_dir(&");
                         self.generate_expr(&args[0]);
                         self.emit
-                            .write(").map_err(sage_runtime::SageError::agent)?");
+                            .write(").map_err(sage_runtime::SageError::agent)");
                     }
                     "make_dir" => {
                         self.emit.write("sage_runtime::stdlib::make_dir(&");
                         self.generate_expr(&args[0]);
                         self.emit
-                            .write(").map_err(sage_runtime::SageError::agent)?");
+                            .write(").map_err(sage_runtime::SageError::agent)");
                     }
                     "read_line" => {
                         self.emit.write("sage_runtime::stdlib::read_line().map_err(sage_runtime::SageError::agent)");
@@ -3909,7 +4122,7 @@ serde_json = "1"
                         self.emit.write(", &");
                         self.generate_expr(&args[1]);
                         self.emit
-                            .write(").map_err(sage_runtime::SageError::agent)?");
+                            .write(").map_err(sage_runtime::SageError::agent)");
                     }
 
                     // =========================================================================
@@ -3919,7 +4132,7 @@ serde_json = "1"
                         self.emit.write("sage_runtime::stdlib::json_parse(&");
                         self.generate_expr(&args[0]);
                         self.emit
-                            .write(").map_err(sage_runtime::SageError::agent)?");
+                            .write(").map_err(sage_runtime::SageError::agent)");
                     }
                     "json_get" => {
                         self.emit.write("sage_runtime::stdlib::json_get(&");
@@ -3995,6 +4208,42 @@ serde_json = "1"
                         self.emit.write(")");
                     }
 
+                    // =========================================================================
+                    // RFC-0023: Dynamic MCP Functions
+                    // =========================================================================
+                    "mcp_connect" => {
+                        self.emit
+                            .write("sage_runtime::stdlib::mcp::mcp_connect(&");
+                        self.generate_expr(&args[0]);
+                        self.emit
+                            .write(").await.map_err(sage_runtime::SageError::agent)");
+                    }
+                    "mcp_list_tools" => {
+                        self.emit
+                            .write("sage_runtime::stdlib::mcp::mcp_list_tools(&");
+                        self.generate_expr(&args[0]);
+                        self.emit
+                            .write(").await.map_err(sage_runtime::SageError::agent)");
+                    }
+                    "mcp_call" => {
+                        self.emit
+                            .write("sage_runtime::stdlib::mcp::mcp_call(&");
+                        self.generate_expr(&args[0]);
+                        self.emit.write(", &");
+                        self.generate_expr(&args[1]);
+                        self.emit.write(", &");
+                        self.generate_expr(&args[2]);
+                        self.emit
+                            .write(").await.map_err(sage_runtime::SageError::agent)");
+                    }
+                    "mcp_disconnect" => {
+                        self.emit
+                            .write("sage_runtime::stdlib::mcp::mcp_disconnect(&");
+                        self.generate_expr(&args[0]);
+                        self.emit
+                            .write(").await.map_err(sage_runtime::SageError::agent)");
+                    }
+
                     name if self.extern_fn_names.contains(name) => {
                         // Extern function — call into sage_extern module
                         self.emit.write("sage_extern::");
@@ -4012,7 +4261,7 @@ serde_json = "1"
                         self.emit.write(")");
                         // Fallible extern fns need error conversion
                         if self.extern_fn_fallible.contains(name) {
-                            self.emit.write(".map_err(sage_runtime::SageError::agent)?");
+                            self.emit.write(".map_err(sage_runtime::SageError::agent)");
                         }
                     }
 
@@ -4119,6 +4368,34 @@ serde_json = "1"
                     self.emit.write(").clone(); ");
                 }
 
+                // RFC-0023: Set up MCP pool for summoned agents that use MCP tools
+                let mcp_tools_in_summon: Vec<String> = tool_uses
+                    .iter()
+                    .filter(|t| self.is_mcp_tool(t))
+                    .cloned()
+                    .collect();
+                if !mcp_tools_in_summon.is_empty() {
+                    self.emit.write(
+                        "let mut _mcp_configs = std::collections::HashMap::new(); ",
+                    );
+                    for tool_name in &mcp_tools_in_summon {
+                        let tool_key = tool_name.to_lowercase();
+                        if let Some(cfg) = self.config.mcp_tools.get(&tool_key).cloned() {
+                            self.emit_mcp_config_insert(&tool_key, &cfg);
+                        }
+                    }
+                    self.emit.write(
+                        "let __mcp_pool = std::sync::Arc::new(sage_mcp::McpConnectionPool::new(_mcp_configs)); ",
+                    );
+                    for tool_name in &mcp_tools_in_summon {
+                        let tool_key = tool_name.to_lowercase();
+                        self.emit.write(&format!(
+                            "let __mcp_{0}_client = sage_mcp::McpToolClientBuilder::new(\"{0}\", std::sync::Arc::clone(&__mcp_pool)).build(); ",
+                            tool_key
+                        ));
+                    }
+                }
+
                 self.emit
                     .write("sage_runtime::spawn(move |mut ctx| async move { ");
                 self.emit.write("let agent = ");
@@ -4144,7 +4421,10 @@ serde_json = "1"
                         }
                         self.emit.write(&tool_name.to_lowercase());
                         self.emit.write(": ");
-                        if tool_name == "Database" {
+                        if self.is_mcp_tool(tool_name) {
+                            // MCP tool: use pre-built client from pool
+                            self.emit.write(&format!("__mcp_{}_client", tool_name.to_lowercase()));
+                        } else if tool_name == "Database" {
                             self.emit.write("DatabaseClient::from_env().await.expect(\"Failed to connect to database\")");
                         } else {
                             self.emit.write(tool_name);
@@ -4244,7 +4524,13 @@ serde_json = "1"
 
             Expr::Yield { value, .. } => {
                 self.emit.write("ctx.emit(");
-                self.generate_expr(value);
+                if matches!(value.as_ref(), Expr::SelfField { .. }) {
+                    self.emit.write("(");
+                    self.generate_expr(value);
+                    self.emit.write(").clone()");
+                } else {
+                    self.generate_expr(value);
+                }
                 self.emit.write(")");
             }
 
@@ -4525,23 +4811,47 @@ serde_json = "1"
                 args,
                 ..
             } => {
-                // Generate: self.tool_name.function(args).await
-                // Returns SageResult<T> - must be handled with try/catch
-                self.emit.write("self.");
-                self.emit.write(&tool.name.to_lowercase());
-                self.emit.write(".");
-                self.emit.write(&function.name);
-                self.emit.write("(");
-                for (i, arg) in args.iter().enumerate() {
-                    if i > 0 {
-                        self.emit.write(", ");
+                if self.is_mcp_tool(&tool.name) {
+                    // RFC-0023: MCP tool call
+                    // Generate: self.tool_name.call_text("function", serde_json::json!({...})).await
+                    //           .map_err(|e| SageError::tool(e.to_string()))
+                    self.emit.write("self.");
+                    self.emit.write(&tool.name.to_lowercase());
+                    self.emit.write(".call_text(\"");
+                    self.emit.write(&function.name);
+                    self.emit.write("\", serde_json::json!({");
+                    for (i, arg) in args.iter().enumerate() {
+                        if i > 0 {
+                            self.emit.write(", ");
+                        }
+                        // Use function param names as JSON keys
+                        // For now, use positional "arg0", "arg1" naming
+                        self.emit.write(&format!("\"arg{}\": ", i));
+                        self.emit.write("(");
+                        self.generate_expr(arg);
+                        self.emit.write(").clone()");
                     }
-                    // Clone arguments to avoid move-out-of-self issues
+                    self.emit.write("})).await");
+                    self.emit.write(".map_err(|e| SageError::tool(e.to_string()))");
+                } else {
+                    // Built-in tool call
+                    // Generate: self.tool_name.function(args).await
+                    self.emit.write("self.");
+                    self.emit.write(&tool.name.to_lowercase());
+                    self.emit.write(".");
+                    self.emit.write(&function.name);
                     self.emit.write("(");
-                    self.generate_expr(arg);
-                    self.emit.write(").clone()");
+                    for (i, arg) in args.iter().enumerate() {
+                        if i > 0 {
+                            self.emit.write(", ");
+                        }
+                        // Clone arguments to avoid move-out-of-self issues
+                        self.emit.write("(");
+                        self.generate_expr(arg);
+                        self.emit.write(").clone()");
+                    }
+                    self.emit.write(").await");
                 }
-                self.emit.write(").await");
             }
 
             // Phase 3: Reply expression for session types
@@ -4820,12 +5130,54 @@ serde_json = "1"
         self.emit.write(s);
     }
 
+    /// Check whether a block contains a `yield` expression (at any nesting level).
+    fn block_has_yield(block: &Block) -> bool {
+        for stmt in &block.stmts {
+            match stmt {
+                Stmt::Expr { expr, .. } => {
+                    if matches!(expr, Expr::Yield { .. }) {
+                        return true;
+                    }
+                }
+                Stmt::If {
+                    then_block,
+                    else_block,
+                    ..
+                } => {
+                    if Self::block_has_yield(then_block) {
+                        return true;
+                    }
+                    if let Some(sage_parser::ElseBranch::Block(b)) = else_block {
+                        if Self::block_has_yield(b) {
+                            return true;
+                        }
+                    }
+                }
+                Stmt::SpanBlock { body, .. } => {
+                    if Self::block_has_yield(body) {
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
     fn infer_agent_output_type(&self, agent: &AgentDecl) -> String {
-        // Look for emit expression in start handler to infer return type
-        // For now, default to i64
+        // Build a map of belief field types so yield(self.field) can be resolved
+        let mut belief_types: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
+        for belief in &agent.beliefs {
+            belief_types.insert(
+                belief.name.name.clone(),
+                Self::type_expr_to_rust(&belief.ty),
+            );
+        }
+
         for handler in &agent.handlers {
             if let EventKind::Start = &handler.event {
-                if let Some(ty) = self.find_emit_type(&handler.body) {
+                if let Some(ty) = self.find_emit_type(&handler.body, &belief_types) {
                     return ty;
                 }
             }
@@ -4833,7 +5185,23 @@ serde_json = "1"
         "i64".to_string()
     }
 
-    fn find_emit_type(&self, block: &Block) -> Option<String> {
+    /// Convert a parser TypeExpr to its Rust type name.
+    fn type_expr_to_rust(ty: &sage_parser::TypeExpr) -> String {
+        match ty {
+            sage_parser::TypeExpr::Int => "i64".to_string(),
+            sage_parser::TypeExpr::Float => "f64".to_string(),
+            sage_parser::TypeExpr::Bool => "bool".to_string(),
+            sage_parser::TypeExpr::String => "String".to_string(),
+            sage_parser::TypeExpr::Unit => "()".to_string(),
+            _ => "i64".to_string(), // Conservative default
+        }
+    }
+
+    fn find_emit_type(
+        &self,
+        block: &Block,
+        belief_types: &std::collections::HashMap<String, String>,
+    ) -> Option<String> {
         // Track variable assignments to resolve yield(var) types
         let mut var_types: std::collections::HashMap<String, String> =
             std::collections::HashMap::new();
@@ -4841,32 +5209,39 @@ serde_json = "1"
         for stmt in &block.stmts {
             // Track let bindings
             if let Stmt::Let { name, value, .. } = stmt {
-                let ty = self.infer_expr_type_with_vars(value, &var_types);
+                let ty = self.infer_expr_type_with_vars(value, &var_types, belief_types);
                 var_types.insert(name.name.clone(), ty);
             }
 
             if let Stmt::Expr { expr, .. } = stmt {
                 if let Expr::Yield { value, .. } = expr {
-                    return Some(self.infer_expr_type_with_vars(value, &var_types));
+                    return Some(self.infer_expr_type_with_vars(value, &var_types, belief_types));
                 }
             }
-            // Check nested blocks
-            if let Stmt::If {
-                then_block,
-                else_block,
-                ..
-            } = stmt
-            {
-                if let Some(ty) = self.find_emit_type(then_block) {
-                    return Some(ty);
-                }
-                if let Some(else_branch) = else_block {
-                    if let sage_parser::ElseBranch::Block(block) = else_branch {
-                        if let Some(ty) = self.find_emit_type(block) {
-                            return Some(ty);
+            // Check nested blocks (if/else, span)
+            match stmt {
+                Stmt::If {
+                    then_block,
+                    else_block,
+                    ..
+                } => {
+                    if let Some(ty) = self.find_emit_type(then_block, belief_types) {
+                        return Some(ty);
+                    }
+                    if let Some(else_branch) = else_block {
+                        if let sage_parser::ElseBranch::Block(block) = else_branch {
+                            if let Some(ty) = self.find_emit_type(block, belief_types) {
+                                return Some(ty);
+                            }
                         }
                     }
                 }
+                Stmt::SpanBlock { body, .. } => {
+                    if let Some(ty) = self.find_emit_type(body, belief_types) {
+                        return Some(ty);
+                    }
+                }
+                _ => {}
             }
         }
         None
@@ -4876,6 +5251,7 @@ serde_json = "1"
         &self,
         expr: &Expr,
         var_types: &std::collections::HashMap<String, String>,
+        belief_types: &std::collections::HashMap<String, String>,
     ) -> String {
         match expr {
             Expr::Var { name, .. } => {
@@ -4885,10 +5261,19 @@ serde_json = "1"
                 }
                 "i64".to_string() // Conservative default
             }
+            Expr::SelfField { field, .. } => {
+                // Look up agent belief type
+                if let Some(ty) = belief_types.get(&field.name) {
+                    return ty.clone();
+                }
+                "i64".to_string()
+            }
             // Try expression unwraps to inner type
-            Expr::Try { expr, .. } => self.infer_expr_type_with_vars(expr, var_types),
+            Expr::Try { expr, .. } => self.infer_expr_type_with_vars(expr, var_types, belief_types),
             // Catch expression returns the Ok type
-            Expr::Catch { expr, .. } => self.infer_expr_type_with_vars(expr, var_types),
+            Expr::Catch { expr, .. } => {
+                self.infer_expr_type_with_vars(expr, var_types, belief_types)
+            }
             // Delegate to basic type inference for other expressions
             _ => self.infer_expr_type(expr),
         }
@@ -5553,7 +5938,7 @@ run DbGuardian;
 
         let output = generate_source(source);
         // Should generate on_error method with &self and &mut ctx
-        assert!(output.contains("async fn on_error(&self, _e: SageError, ctx: &mut AgentContext"));
+        assert!(output.contains("async fn on_error(&self, e: SageError, ctx: &mut AgentContext"));
         // Main should dispatch to on_error on failure with &mut ctx
         assert!(output.contains(".on_error(e, &mut ctx)"));
     }
@@ -6229,6 +6614,128 @@ run DbGuardian;
         assert!(
             output.contains("Persisted::new("),
             "Should wrap persistent field"
+        );
+    }
+
+    // =========================================================================
+    // RFC-0023: MCP Codegen
+    // =========================================================================
+
+    #[test]
+    fn generate_mcp_connect_call() {
+        let source = r#"
+            agent Main {
+                on start {
+                    let h = try mcp_connect("{}");
+                    yield(0);
+                }
+                on error(e) {
+                    yield(1);
+                }
+            }
+            run Main;
+        "#;
+
+        let output = generate_source(source);
+        assert!(
+            output.contains("sage_runtime::stdlib::mcp::mcp_connect"),
+            "Should emit mcp_connect call: {output}"
+        );
+        assert!(
+            output.contains(".await.map_err(sage_runtime::SageError::agent)"),
+            "Should emit await and error handling: {output}"
+        );
+    }
+
+    #[test]
+    fn generate_mcp_call_three_args() {
+        let source = r#"
+            agent Main {
+                on start {
+                    let r = try mcp_call("h", "tool", "{}");
+                    yield(0);
+                }
+                on error(e) {
+                    yield(1);
+                }
+            }
+            run Main;
+        "#;
+
+        let output = generate_source(source);
+        assert!(
+            output.contains("sage_runtime::stdlib::mcp::mcp_call"),
+            "Should emit mcp_call: {output}"
+        );
+    }
+
+    #[test]
+    fn generate_mcp_disconnect_call() {
+        let source = r#"
+            agent Main {
+                on start {
+                    mcp_disconnect("h") catch { () };
+                    yield(0);
+                }
+            }
+            run Main;
+        "#;
+
+        let output = generate_source(source);
+        assert!(
+            output.contains("sage_runtime::stdlib::mcp::mcp_disconnect"),
+            "Should emit mcp_disconnect call: {output}"
+        );
+    }
+
+    #[test]
+    fn generate_mcp_tool_agent_field() {
+        let source = r#"
+            tool Github {
+                fn list_issues(repo: String) -> String
+            }
+
+            agent Main {
+                use Github
+                on start {
+                    let issues = try Github.list_issues("sage-lang/sage");
+                    yield(0);
+                }
+                on error(e) {
+                    yield(1);
+                }
+            }
+            run Main;
+        "#;
+
+        let mut config = CodegenConfig::default();
+        config.mcp_tools.insert(
+            "github".to_string(),
+            McpToolGenConfig {
+                transport: "stdio".to_string(),
+                command: Some("npx".to_string()),
+                args: vec!["-y".to_string(), "@mcp/server-github".to_string()],
+                env: std::collections::HashMap::new(),
+                url: None,
+                timeout_ms: 30_000,
+                connect_timeout_ms: 10_000,
+            },
+        );
+
+        let lex_result = lex(source).expect("lexing failed");
+        let source_arc: Arc<str> = Arc::from(source);
+        let (program, errors) = parse(lex_result.tokens(), source_arc);
+        assert!(errors.is_empty(), "parse errors: {errors:?}");
+        let program = program.expect("should parse");
+        let output = generate_with_full_config(&program, "test", config).main_rs;
+
+        assert!(
+            output.contains("sage_mcp::McpToolClient"),
+            "MCP tool agent field should use McpToolClient type: {output}"
+        );
+        assert!(
+            output.contains("call_text"),
+            "MCP tool call should use call_text: {output}"
         );
     }
 }

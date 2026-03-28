@@ -1,0 +1,33 @@
+[project]
+name = "mcp-devops"
+version = "0.1.0"
+entry = "src/main.sg"
+
+# MCP tool: GitHub operations via the official MCP server
+[tools.github]
+transport = "stdio"
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-github"]
+timeout_ms = 30000
+
+[tools.github.env]
+GITHUB_PERSONAL_ACCESS_TOKEN = "$GITHUB_TOKEN"
+
+# MCP tool: Filesystem operations via the official MCP server
+[tools.filesystem]
+transport = "stdio"
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem", "/tmp/sage-devops"]
+timeout_ms = 10000
+
+[persistence]
+backend = "sqlite"
+path = ".sage/devops_state.db"
+
+[supervision]
+max_restarts = 3
+within_seconds = 60
+
+[observability]
+backend = "ndjson"
+service_name = "mcp-devops"

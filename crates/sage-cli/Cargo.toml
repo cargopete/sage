@@ -11,12 +11,13 @@ name = "sage"
 path = "src/main.rs"
 
 [dependencies]
-sage-parser = { path = "../sage-parser", version = "2.1.0" }
-sage-checker = { path = "../sage-checker", version = "2.1.0" }
-sage-codegen = { path = "../sage-codegen", version = "2.1.0" }
-sage-loader = { path = "../sage-loader", version = "2.1.0" }
-sage-package = { path = "../sage-package", version = "2.1.0" }
-sage-sense = { path = "../sage-sense", version = "2.1.0" }
+sage-parser = { path = "../sage-parser", version = "2.2.0" }
+sage-checker = { path = "../sage-checker", version = "2.2.0" }
+sage-codegen = { path = "../sage-codegen", version = "2.2.0" }
+sage-loader = { path = "../sage-loader", version = "2.2.0" }
+sage-package = { path = "../sage-package", version = "2.2.0" }
+sage-sense = { path = "../sage-sense", version = "2.2.0" }
+sage-mcp = { path = "../sage-mcp", version = "2.2.0" }
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 miette = { version = "7", features = ["fancy"] }
@@ -27,6 +28,7 @@ toml_edit = "0.22"
 walkdir = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+toml = "0.8"
 
 [lints]
 workspace = true

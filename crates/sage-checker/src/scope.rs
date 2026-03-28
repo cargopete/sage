@@ -216,6 +216,8 @@ pub struct ToolFnInfo {
     pub params: Vec<(String, Type)>,
     /// Return type.
     pub return_ty: Type,
+    /// MCP tool name override (RFC-0023).
+    pub mcp_name: Option<String>,
 }
 
 /// A scope containing variable bindings and tool declarations.
@@ -251,6 +253,7 @@ impl Scope {
                     Box::new(Type::Named("HttpResponse".to_string())),
                     Box::new(Type::String),
                 ),
+                mcp_name: None,
             },
         );
 
@@ -266,6 +269,7 @@ impl Scope {
                     Box::new(Type::Named("HttpResponse".to_string())),
                     Box::new(Type::String),
                 ),
+                mcp_name: None,
             },
         );
 
@@ -281,6 +285,7 @@ impl Scope {
                     Box::new(Type::Named("HttpResponse".to_string())),
                     Box::new(Type::String),
                 ),
+                mcp_name: None,
             },
         );
 
@@ -293,6 +298,7 @@ impl Scope {
                     Box::new(Type::Named("HttpResponse".to_string())),
                     Box::new(Type::String),
                 ),
+                mcp_name: None,
             },
         );
 
@@ -314,6 +320,7 @@ impl Scope {
             ToolFnInfo {
                 params: vec![("path".to_string(), Type::String)],
                 return_ty: Type::Result(Box::new(Type::String), Box::new(Type::String)),
+                mcp_name: None,
             },
         );
 
@@ -326,6 +333,7 @@ impl Scope {
                     ("content".to_string(), Type::String),
                 ],
                 return_ty: Type::Result(Box::new(Type::Unit), Box::new(Type::String)),
+                mcp_name: None,
             },
         );
 
@@ -335,6 +343,7 @@ impl Scope {
             ToolFnInfo {
                 params: vec![("path".to_string(), Type::String)],
                 return_ty: Type::Result(Box::new(Type::Bool), Box::new(Type::String)),
+                mcp_name: None,
             },
         );
 
@@ -347,6 +356,7 @@ impl Scope {
                     Box::new(Type::List(Box::new(Type::String))),
                     Box::new(Type::String),
                 ),
+                mcp_name: None,
             },
         );
 
@@ -356,6 +366,7 @@ impl Scope {
             ToolFnInfo {
                 params: vec![("path".to_string(), Type::String)],
                 return_ty: Type::Result(Box::new(Type::Unit), Box::new(Type::String)),
+                mcp_name: None,
             },
         );
 
@@ -380,6 +391,7 @@ impl Scope {
                     Box::new(Type::Named("ShellResult".to_string())),
                     Box::new(Type::String),
                 ),
+                mcp_name: None,
             },
         );
 
@@ -404,6 +416,7 @@ impl Scope {
                     Box::new(Type::List(Box::new(Type::Named("DbRow".to_string())))),
                     Box::new(Type::String),
                 ),
+                mcp_name: None,
             },
         );
 
@@ -413,6 +426,7 @@ impl Scope {
             ToolFnInfo {
                 params: vec![("sql".to_string(), Type::String)],
                 return_ty: Type::Result(Box::new(Type::Int), Box::new(Type::String)),
+                mcp_name: None,
             },
         );
 
@@ -449,6 +463,11 @@ impl Scope {
     #[must_use]
     pub fn lookup_tool(&self, name: &str) -> Option<&ToolInfo> {
         self.tools.get(name)
+    }
+
+    /// Register a tool in this scope (RFC-0011 / RFC-0023).
+    pub fn define_tool(&mut self, name: String, info: ToolInfo) {
+        self.tools.insert(name, info);
     }
 }
 
@@ -2188,6 +2207,54 @@ impl SymbolTable {
                 params: None, // Generic
                 return_type: Type::Unit,
                 is_fallible: false,
+            },
+        );
+
+        // =========================================================================
+        // RFC-0023: Dynamic MCP Functions
+        // =========================================================================
+
+        // mcp_connect(String) -> String fails
+        self.builtins.insert(
+            "mcp_connect",
+            BuiltinInfo {
+                name: "mcp_connect",
+                params: Some(vec![Type::String]),
+                return_type: Type::String,
+                is_fallible: true,
+            },
+        );
+
+        // mcp_list_tools(String) -> String fails
+        self.builtins.insert(
+            "mcp_list_tools",
+            BuiltinInfo {
+                name: "mcp_list_tools",
+                params: Some(vec![Type::String]),
+                return_type: Type::String,
+                is_fallible: true,
+            },
+        );
+
+        // mcp_call(String, String, String) -> String fails
+        self.builtins.insert(
+            "mcp_call",
+            BuiltinInfo {
+                name: "mcp_call",
+                params: Some(vec![Type::String, Type::String, Type::String]),
+                return_type: Type::String,
+                is_fallible: true,
+            },
+        );
+
+        // mcp_disconnect(String) -> Unit fails
+        self.builtins.insert(
+            "mcp_disconnect",
+            BuiltinInfo {
+                name: "mcp_disconnect",
+                params: Some(vec![Type::String]),
+                return_type: Type::Unit,
+                is_fallible: true,
             },
         );
     }

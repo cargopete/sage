@@ -44,6 +44,10 @@ pub use tools::{
 };
 pub use tracing as trace;
 
+// MCP support (RFC-0023) — gated behind the "mcp" feature.
+#[cfg(feature = "mcp")]
+pub use sage_mcp as mcp;
+
 /// Prelude for generated code.
 pub mod prelude {
     pub use crate::agent::{spawn, spawn_with_llm_config, AgentContext, AgentHandle, Message};

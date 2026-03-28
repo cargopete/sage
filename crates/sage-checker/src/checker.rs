@@ -4,6 +4,7 @@ use crate::error::CheckError;
 use crate::scope::{
     resolve_type, resolve_type_with_params, AgentInfo, ConstInfo, EffectHandlerInfo, EnumInfo,
     FunctionInfo, ProtocolInfo, ProtocolStepInfo, RecordInfo, Scope, SupervisorInfo, SymbolTable,
+    ToolFnInfo, ToolInfo,
 };
 use crate::types::Type;
 use sage_parser::{
@@ -503,6 +504,36 @@ impl Checker {
                 module_path: self.current_module.clone(),
             });
         }
+
+        // Collect user-defined tools (RFC-0011 / RFC-0023)
+        for tool in &program.tools {
+            let mut functions = HashMap::new();
+            for func in &tool.functions {
+                let params: Vec<(String, Type)> = func
+                    .params
+                    .iter()
+                    .map(|p| (p.name.name.clone(), resolve_type(&p.ty)))
+                    .collect();
+                let return_ty = resolve_type(&func.return_ty);
+                functions.insert(
+                    func.name.name.clone(),
+                    ToolFnInfo {
+                        params,
+                        return_ty,
+                        mcp_name: func.mcp_name.clone(),
+                    },
+                );
+            }
+
+            self.scope.define_tool(
+                tool.name.name.clone(),
+                ToolInfo {
+                    name: tool.name.name.clone(),
+                    functions,
+                    is_pub: tool.is_pub,
+                },
+            );
+        }
     }
 
     // =========================================================================
@@ -513,6 +544,13 @@ impl Checker {
         self.current_agent = Some(agent.name.name.clone());
         self.used_beliefs.clear();
         self.in_message_handler = false;
+
+        // RFC-0011: Populate the set of tools this agent has declared
+        self.current_agent_tools = agent
+            .tool_uses
+            .iter()
+            .map(|t| t.name.clone())
+            .collect();
 
         // Set receives type from the agent's receives clause
         self.receives_type = agent.receives.as_ref().map(resolve_type);

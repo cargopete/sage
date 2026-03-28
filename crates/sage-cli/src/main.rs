@@ -7,7 +7,7 @@ use miette::{Diagnostic, IntoDiagnostic, Result, Severity, WrapErr};
 use sage_checker::{check_module_tree, Checker};
 use sage_codegen::{
     generate_module_tree_with_full_config, generate_test_program_with_config, CodegenConfig,
-    CodegenTarget, ObservabilityConfig, PersistenceBackend, RuntimeDep,
+    CodegenTarget, McpToolGenConfig, ObservabilityConfig, PersistenceBackend, RuntimeDep,
 };
 use sage_loader::{
     discover_test_files, load_project, load_project_with_packages, load_test_files, ModuleTree,
@@ -213,6 +213,12 @@ enum Commands {
         #[command(subcommand)]
         action: TraceAction,
     },
+
+    /// Manage MCP tool connections (RFC-0023)
+    Tools {
+        #[command(subcommand)]
+        action: ToolsAction,
+    },
 }
 
 #[derive(Subcommand)]
@@ -265,6 +271,21 @@ enum CacheAction {
 
     /// Clear the entire cache
     Clean,
+}
+
+#[derive(Subcommand)]
+enum ToolsAction {
+    /// List MCP tools configured in grove.toml
+    List,
+
+    /// Inspect a specific MCP tool (connect and discover its capabilities)
+    Inspect {
+        /// Tool name as declared in grove.toml [tools.X]
+        tool: String,
+    },
+
+    /// Verify all MCP tools can connect and initialise
+    Verify,
 }
 
 fn main() -> Result<()> {
@@ -345,6 +366,11 @@ fn main() -> Result<()> {
             TraceAction::Filter { file, agent } => cmd_trace_filter(&file, &agent),
             TraceAction::Infer { file } => cmd_trace_infer(&file),
             TraceAction::Cost { file } => cmd_trace_cost(&file),
+        },
+        Commands::Tools { action } => match action {
+            ToolsAction::List => cmd_tools_list(),
+            ToolsAction::Inspect { tool } => cmd_tools_inspect(&tool),
+            ToolsAction::Verify => cmd_tools_verify(),
         },
     }
 }
@@ -795,11 +821,17 @@ struct ExternConfig {
 /// Returns defaults if no manifest is found or on error.
 fn load_manifest_configs(
     path: &Path,
-) -> (PersistenceBackend, SupervisionConfig, ObservabilityConfig) {
+) -> (
+    PersistenceBackend,
+    SupervisionConfig,
+    ObservabilityConfig,
+    std::collections::HashMap<String, McpToolGenConfig>,
+) {
     let defaults = (
         PersistenceBackend::Memory,
         SupervisionConfig::default(),
         ObservabilityConfig::default(),
+        std::collections::HashMap::new(),
     );
 
     // Find the grove.toml manifest
@@ -836,13 +868,81 @@ fn load_manifest_configs(
 
     // Load and parse the manifest
     match ProjectManifest::load(&manifest_path) {
-        Ok(manifest) => (
-            convert_persistence_config(&manifest.persistence),
-            manifest.supervision.clone(),
-            convert_observability_config(&manifest.observability),
-        ),
+        Ok(manifest) => {
+            let mcp_tools = convert_mcp_configs(&manifest.tools.mcp);
+            (
+                convert_persistence_config(&manifest.persistence),
+                manifest.supervision.clone(),
+                convert_observability_config(&manifest.observability),
+                mcp_tools,
+            )
+        }
         Err(_) => defaults,
     }
+}
+
+/// Convert raw TOML MCP tool configs into codegen-ready structs.
+fn convert_mcp_configs(
+    raw: &std::collections::HashMap<String, toml::Value>,
+) -> std::collections::HashMap<String, McpToolGenConfig> {
+    let mut result = std::collections::HashMap::new();
+    for (name, value) in raw {
+        if let Some(table) = value.as_table() {
+            let transport = table
+                .get("transport")
+                .and_then(|v| v.as_str())
+                .unwrap_or("stdio")
+                .to_string();
+            let command = table
+                .get("command")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let args = table
+                .get("args")
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let env = table
+                .get("env")
+                .and_then(|v| v.as_table())
+                .map(|t| {
+                    t.iter()
+                        .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let url = table
+                .get("url")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let timeout_ms = table
+                .get("timeout_ms")
+                .and_then(|v| v.as_integer())
+                .unwrap_or(30_000) as u64;
+            let connect_timeout_ms = table
+                .get("connect_timeout_ms")
+                .and_then(|v| v.as_integer())
+                .unwrap_or(10_000) as u64;
+
+            result.insert(
+                name.clone(),
+                McpToolGenConfig {
+                    transport,
+                    command,
+                    args,
+                    env,
+                    url,
+                    timeout_ms,
+                    connect_timeout_ms,
+                },
+            );
+        }
+    }
+    result
 }
 
 /// Load extern Rust interop configuration from grove.toml [extern] section.
@@ -1060,7 +1160,7 @@ fn build_file(
     }
 
     // Load configuration from manifest
-    let (persistence, supervision, observability) = load_manifest_configs(path);
+    let (persistence, supervision, observability, mcp_tools) = load_manifest_configs(path);
     let extern_config = load_extern_config(path);
 
     // Determine project root for resolving relative paths (extern modules etc.)
@@ -1099,6 +1199,7 @@ fn build_file(
         supervision,
         observability,
         target: target.clone(),
+        mcp_tools,
     };
 
     // Generate Rust code from module tree with full config
@@ -2946,4 +3047,232 @@ fn cmd_trace_cost(file: &Path) -> Result<()> {
     );
 
     Ok(())
+}
+
+// =============================================================================
+// RFC-0023: MCP Tools Commands
+// =============================================================================
+
+/// Load the MCP tools configuration from grove.toml in the current directory.
+fn load_mcp_tool_configs() -> Result<std::collections::HashMap<String, toml::Value>> {
+    let cwd = std::env::current_dir().into_diagnostic()?;
+    let manifest_path = ProjectManifest::find(&cwd).ok_or_else(|| {
+        miette::miette!("No grove.toml found. Run this from a Sage project directory.")
+    })?;
+    let manifest = ProjectManifest::load(&manifest_path)
+        .map_err(|e| miette::miette!("Failed to load grove.toml: {}", e))?;
+
+    if manifest.tools.mcp.is_empty() {
+        return Err(miette::miette!(
+            "No MCP tools configured in grove.toml.\n\
+             Add a [tools.<name>] section with transport, command, etc."
+        ));
+    }
+
+    Ok(manifest.tools.mcp)
+}
+
+/// `sage tools list` — list MCP tools configured in grove.toml.
+fn cmd_tools_list() -> Result<()> {
+    let tools = load_mcp_tool_configs()?;
+
+    println!(
+        "{} Found {} MCP tool(s) in grove.toml:\n",
+        WARD,
+        style(tools.len()).bold()
+    );
+
+    for (name, value) in &tools {
+        let table = value.as_table();
+        let transport = table
+            .and_then(|t| t.get("transport"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("stdio");
+        let command = table
+            .and_then(|t| t.get("command"))
+            .and_then(|v| v.as_str());
+        let url = table
+            .and_then(|t| t.get("url"))
+            .and_then(|v| v.as_str());
+
+        let detail = match transport {
+            "stdio" => command.unwrap_or("(no command)").to_string(),
+            "http" => url.unwrap_or("(no url)").to_string(),
+            _ => format!("({transport})"),
+        };
+
+        println!(
+            "  {} {} {}",
+            style(CHECK).green(),
+            style(name).bold(),
+            style(format!("[{transport}] {detail}")).dim()
+        );
+    }
+
+    Ok(())
+}
+
+/// `sage tools inspect <tool>` — connect to an MCP tool and list its capabilities.
+fn cmd_tools_inspect(tool_name: &str) -> Result<()> {
+    let tools = load_mcp_tool_configs()?;
+    let tool_value = tools.get(tool_name).ok_or_else(|| {
+        miette::miette!(
+            "No MCP tool '{}' found in grove.toml. Available: {}",
+            tool_name,
+            tools.keys().cloned().collect::<Vec<_>>().join(", ")
+        )
+    })?;
+
+    // Deserialise the raw TOML into McpToolConfig via JSON round-trip
+    let config = toml_value_to_mcp_config(tool_name, tool_value)?;
+
+    println!(
+        "{} Connecting to MCP tool '{}'...",
+        WARD,
+        style(tool_name).bold()
+    );
+
+    // Run async inspect in a tokio runtime
+    let rt = tokio::runtime::Runtime::new().into_diagnostic()?;
+    rt.block_on(async {
+        let client = sage_mcp::client::McpClient::from_config(&config)
+            .await
+            .map_err(|e| miette::miette!("Connection failed: {}", e))?;
+
+        client
+            .initialize()
+            .await
+            .map_err(|e| miette::miette!("Initialisation failed: {}", e))?;
+
+        let tools = client
+            .list_tools()
+            .await
+            .map_err(|e| miette::miette!("Failed to list tools: {}", e))?;
+
+        println!(
+            "\n  {} {} exposes {} tool(s):\n",
+            style(CHECK).green(),
+            style(tool_name).bold(),
+            style(tools.len()).bold()
+        );
+
+        for tool in &tools {
+            println!("  {} {}", style("·").dim(), style(&tool.name).bold());
+            if let Some(ref desc) = tool.description {
+                println!("    {}", style(desc).dim());
+            }
+            if let Some(ref schema) = tool.input_schema {
+                if let Some(props) = schema.get("properties") {
+                    if let Some(obj) = props.as_object() {
+                        let param_names: Vec<&str> =
+                            obj.keys().map(|k| k.as_str()).collect();
+                        if !param_names.is_empty() {
+                            println!(
+                                "    params: {}",
+                                style(param_names.join(", ")).dim()
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        let _ = client.shutdown().await;
+        Ok(())
+    })
+}
+
+/// `sage tools verify` — verify all MCP tools can connect and initialise.
+fn cmd_tools_verify() -> Result<()> {
+    let tools = load_mcp_tool_configs()?;
+
+    println!(
+        "{} Verifying {} MCP tool(s)...\n",
+        WARD,
+        style(tools.len()).bold()
+    );
+
+    let rt = tokio::runtime::Runtime::new().into_diagnostic()?;
+    let mut passed = 0usize;
+    let mut failed = 0usize;
+
+    for (name, value) in &tools {
+        let config = match toml_value_to_mcp_config(name, value) {
+            Ok(c) => c,
+            Err(e) => {
+                println!("  {} {} — {}", style("✗").red(), style(name).bold(), e);
+                failed += 1;
+                continue;
+            }
+        };
+
+        let result: Result<usize> = rt.block_on(async {
+            let client = sage_mcp::client::McpClient::from_config(&config)
+                .await
+                .map_err(|e| miette::miette!("connection failed: {}", e))?;
+
+            client
+                .initialize()
+                .await
+                .map_err(|e| miette::miette!("initialisation failed: {}", e))?;
+
+            let tools = client
+                .list_tools()
+                .await
+                .map_err(|e| miette::miette!("list_tools failed: {}", e))?;
+
+            let count = tools.len();
+            let _ = client.shutdown().await;
+            Ok(count)
+        });
+
+        match result {
+            Ok(count) => {
+                println!(
+                    "  {} {} — {} tool(s)",
+                    style(CHECK).green(),
+                    style(name).bold(),
+                    count
+                );
+                passed += 1;
+            }
+            Err(e) => {
+                println!("  {} {} — {}", style("✗").red(), style(name).bold(), e);
+                failed += 1;
+            }
+        }
+    }
+
+    println!();
+    if failed == 0 {
+        println!(
+            "{} All {} tool(s) verified successfully.",
+            style(SPARKLES),
+            passed
+        );
+        Ok(())
+    } else {
+        Err(miette::miette!(
+            "{} passed, {} failed",
+            passed,
+            failed
+        ))
+    }
+}
+
+/// Convert a raw TOML value from grove.toml [tools.X] into an McpToolConfig.
+fn toml_value_to_mcp_config(
+    tool_name: &str,
+    value: &toml::Value,
+) -> Result<sage_mcp::config::McpToolConfig> {
+    // Serialise TOML value to JSON string, then deserialise into McpToolConfig.
+    // This avoids duplicating the parsing logic already in McpToolConfig's Deserialize impl.
+    let json = serde_json::to_string(value)
+        .map_err(|e| miette::miette!("Failed to convert tool '{}' config: {}", tool_name, e))?;
+    let config: sage_mcp::config::McpToolConfig = serde_json::from_str(&json)
+        .map_err(|e| miette::miette!("Invalid config for tool '{}': {}", tool_name, e))?;
+    config
+        .validate(tool_name)
+        .map_err(|e| miette::miette!("{}", e))?;
+    Ok(config)
 }
