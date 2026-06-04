@@ -296,6 +296,11 @@ struct Generator {
     extern_fn_fallible: std::collections::HashSet<String>,
     /// String constant names (need .to_string() when referenced)
     string_consts: std::collections::HashSet<String>,
+    /// Every agent across all modules (name -> decl). Lets a supervisor in one
+    /// module construct a child agent declared in another (e.g. agent in
+    /// core.sg, supervisor in main.sg). Without this, the child lookup only
+    /// sees the supervisor's own module and emits a fieldless constructor.
+    all_agents: std::collections::HashMap<String, AgentDecl>,
 }
 
 impl Generator {
@@ -312,6 +317,7 @@ impl Generator {
             extern_fn_names: std::collections::HashSet::new(),
             extern_fn_fallible: std::collections::HashSet::new(),
             string_consts: std::collections::HashSet::new(),
+            all_agents: std::collections::HashMap::new(),
         }
     }
 
@@ -627,7 +633,12 @@ impl Generator {
     }
 
     fn generate_module_tree(&mut self, tree: &ModuleTree) -> String {
-        // Pre-pass: Collect agent metadata and extern fns from all modules
+        // Pre-pass: Collect agent metadata, extern fns, and string consts from
+        // all modules. Doing string consts here (rather than lazily in
+        // generate_const) means a cross-module reference like `banner(VERSION)`
+        // is recognised as a String const regardless of module emission order,
+        // so it gets `.to_string()` instead of a bare `.clone()` (which would
+        // leave it as `&str`).
         let mut has_extern_fns = false;
         for module in tree.modules.values() {
             for agent in &module.program.agents {
@@ -636,6 +647,11 @@ impl Generator {
             if !module.program.extern_fns.is_empty() {
                 has_extern_fns = true;
                 self.collect_extern_fns(&module.program.extern_fns);
+            }
+            for const_decl in &module.program.consts {
+                if matches!(const_decl.ty, TypeExpr::String) {
+                    self.string_consts.insert(const_decl.name.name.clone());
+                }
             }
         }
 
@@ -1494,6 +1510,9 @@ serde_json = "1"
     /// This is called in a pre-pass before any code generation.
     fn collect_agent_metadata(&mut self, agent: &AgentDecl) {
         let name = &agent.name.name;
+
+        // Register the full decl so a supervisor in any module can construct it.
+        self.all_agents.insert(name.clone(), agent.clone());
 
         // Track if this agent has an error handler
         let has_error_handler = agent
@@ -2451,11 +2470,18 @@ serde_json = "1"
         for child in &supervisor.children {
             let child_agent_name = &child.agent_name.name;
 
-            // Find the agent declaration to understand its structure
-            let agent = program
+            // Find the agent declaration to understand its structure. Prefer the
+            // supervisor's own module, then fall back to the cross-module
+            // registry so an agent declared in another module (e.g. core.sg)
+            // still gets a fully-initialised constructor. Cloned into a local so
+            // we don't hold a borrow of `self` across the `self.emit` calls below.
+            let found_agent: Option<AgentDecl> = program
                 .agents
                 .iter()
-                .find(|a| a.name.name == *child_agent_name);
+                .find(|a| a.name.name == *child_agent_name)
+                .cloned()
+                .or_else(|| self.all_agents.get(child_agent_name).cloned());
+            let agent = found_agent.as_ref();
 
             // Phase 3: Set current protocol roles for this child agent
             self.current_protocol_roles.clear();
